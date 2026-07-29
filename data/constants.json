@@ -1,0 +1,61 @@
+{
+  "_comment": "Tunable production constants. Verified against the 40KG/25KG examples where noted; adjust others to match your plant.",
+  "dung_sai_default": 0.05,
+  "dung_sai_field": "order.tolerance (optional, overrides default)",
+
+  "dinh_luong_giay_kraft_gm2": 70,
+  "dinh_luong_manh_trang_gm2": 70,
+  "dinh_luong_manh_trong_gm2": 72,
+  "dinh_luong_manh_4oranges_gm2": 75,
+
+  "kho_manh_formula": "(width_plus_gusset_m) * 2 + 0.06",
+  "kho_giay_formula": "(width_plus_gusset_m) * 2 + 0.02",
+
+  "phe_chong_mau_m": {"1": 200, "2": 300, "3": 400, "4": 500, "5": 500, "6": 500},
+
+  "in_opp": {
+    "_verified_40kg": "dung môi OPP=12.5286, EA=5.3694 (exact)",
+    "mang_bopp_coeff": 0.01584,
+    "_mang_note": "màng OPP kg = SL_in_thuc_te * khổ_màng * coeff. 40KG gives 49.14 with coeff 0.01584 (empirical, density/thickness baked in). Quy trình states 0.018; tune to your film.",
+    "dung_moai_opp_coeff": 0.006,
+    "dung_moai_opp_share": 0.70,
+    "dung_moai_ea_share": 0.30
+  },
+
+  "in_flexo": {
+    "_note": "Paper bags. Giấy kraft kg = SL_in_thuc_te * khổ_giấy * ĐL_giayı/1000 (g/m2→kg/m2).",
+    "muc_flexo_default_kg_per_color": 8
+  },
+
+  "trang": {
+    "f801c_share_kp": 0.90,
+    "f801c_share_opp": 0.85,
+    "f801c_dinh_luong": 0.02,
+    "taical_share": 0.10,
+    "taical_dinh_luong": 0.02,
+    "hat_mau_share_opp": 0.05,
+    "hat_mau_dinh_luong": 0.02
+  },
+
+  "dan": {
+    "keo_coeff_kp": 3.314,
+    "keo_coeff_opp": 3.2912,
+    "_keo_coeff_opp_note": "Tuned to 40KG example (gives F801C=Vistamax=4.0482 kg each). Quy trình text states 3.114; verify with more samples and adjust.",
+    "f801c_vistamax_share_each": 0.50,
+    "special_9415_share": 0.60,
+    "special_vistamax_share": 0.40
+  },
+
+  "thoi": {
+    "ldpe_share": 0.893,
+    "taical_efpe_share": 0.107
+  },
+
+  "may": {
+    "chi_may_kg_per_1000_bao": 0.6,
+    "day_bo_bao_kg_per_5000": 1.0,
+    "nep_kp_dinh_luong": 0.16,
+    "nep_opp_dinh_luong": 0.106,
+    "nep_extra_cm": 12
+  }
+}

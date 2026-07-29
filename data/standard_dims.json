@@ -1,0 +1,13 @@
+{
+  "_comment": "Standard bag dimensions lookup (cm) from 'Quy trình làm định mức'. Use when the order's màng-in/mành width is not explicitly given. ngang_hong_cm = width + gusset.",
+  "_source": "Copy - Quy trình làm định mức.xlsx -> sheet 'Bao in offset' O6:R12",
+  "rows": [
+    {"ngang_hong_cm": "32 + 8", "width_cm": 32, "gusset_cm": 8, "dai_cm_range": [55, 71], "mang_in_cm": 84, "manh_cm": 86},
+    {"ngang_hong_cm": "37 + 8", "width_cm": 37, "gusset_cm": 8, "dai_cm_range": [72, 88], "mang_in_cm": 94, "manh_cm": 96},
+    {"ngang_hong_cm": "42 + 8", "width_cm": 42, "gusset_cm": 8, "dai_cm_range": null, "mang_in_cm": 104, "manh_cm": 106},
+    {"ngang_hong_cm": "48 + 10", "width_cm": 48, "gusset_cm": 10, "dai_cm_range": [89, 95], "mang_in_cm": 120, "manh_cm": 122},
+    {"ngang_hong_cm": "48 + 12", "width_cm": 48, "gusset_cm": 12, "dai_cm_range": [98, 105], "mang_in_cm": 124, "manh_cm": 126},
+    {"ngang_hong_cm": "45 + 15", "width_cm": 45, "gusset_cm": 15, "dai_cm_range": null, "mang_in_cm": 124, "manh_cm": 126}
+  ],
+  "lookup": "match by width_cm+gusset_cm; if bag length falls in dai_cm_range that confirms the row. Returns mang_in_cm (khổ màng) and manh_cm (khổ mành) in cm → divide by 100 for metres."
+}

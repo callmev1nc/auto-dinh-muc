@@ -1,0 +1,32 @@
+{
+  "_comment": "Detect the bag family from the order. The bag weight/type is read FROM the order (product name + Cấu trúc spec). family picks the template + formula set.",
+  "families": {
+    "opp": {
+      "_aka": "Bao BOPP in ống đồng (40KG putty bags, e.g. 4 Oranges)",
+      "template": "templates/Định mức - OPP (Bao BOPP in ống đồng).xlsx",
+      "name_keywords": ["BOPP", "OPP", "in ống đồng", "in ong dong"],
+      "spec_keywords": ["BOPP", "OPP mờ", "OPP bóng", "in ống đồng"],
+      "weight_hint_kg": 40,
+      "print": "ong_dong",
+      "has_phe_chong_mau": true,
+      "has_dung_moai": true
+    },
+    "paper_kp": {
+      "_aka": "Bao KP / Bao giấy in flexo (25KG, e.g. Tân Châu AM-20)",
+      "template": "templates/Định mức - Bao giấy (KP / in offset).xlsx",
+      "name_keywords": ["bao giấy", "bao kp", "in flexo", "kraft", "AM-20", "AM-25"],
+      "spec_keywords": ["Bao KP in Flexo", "Giấy Kraft", "Bao in offset", "in flexo"],
+      "weight_hint_kg": 25,
+      "print": "flexo",
+      "has_phe_chong_mau": false,
+      "has_dung_moai": false
+    }
+  },
+  "detection": [
+    "1. Lowercase the product name + Cấu trúc spec.",
+    "2. If any opp.name_keywords OR opp.spec_keywords present -> family 'opp'.",
+    "3. Else if any paper_kp keywords -> family 'paper_kp'.",
+    "4. Fallback: weight in product name ('40kg'->opp, '25kg'->paper_kp); else ask.",
+    "Weight is informational (appears in product name like '...40KG'); the family is what selects the template."
+  ]
+}

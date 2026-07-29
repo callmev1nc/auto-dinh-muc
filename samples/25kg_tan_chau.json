@@ -1,0 +1,15 @@
+{
+  "_comment": "Reference order matching the 25KG Tân Châu example. Tests the paper/KP path + Tân Châu 9415-glue rule. Expected: sl_in=4600, giấy kraft=328.44, glue 9415=9.1466/Vistamax=6.0978.",
+  "customer": "NHÀ MÁY SX TINH BỘT SẮN TÂN CHÂU - CN CÔNG TY CPNS THỰC PHẨM QUẢNG NGÃI",
+  "product_name": "Bao giấy 25kg AM-20 Tân Châu",
+  "product_code": "BT1KH00563KP0004",
+  "order_id": "26BA2HKH00563000029",
+  "so_phieu_sx": "SX2607045",
+  "qty": 5000,
+  "bag_length_m": 0.92,
+  "width_plus_gusset_m": 0.5,
+  "width_cm": 42,
+  "gusset_cm": 8,
+  "inner_bag_weight_kg": 0.041,
+  "spec": "1.Kích thước: 50 x 92 cm\n3. Cấu trúc: Bao KP in Flexo - Giấy Kraft vàng Nhật"
+}

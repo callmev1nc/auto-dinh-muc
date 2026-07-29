@@ -1,0 +1,29 @@
+{
+  "_comment": "Customer-specific exceptions to the standard formulas. Matched by keyword in customer name / product spec.",
+  "rules": [
+    {
+      "id": "4oranges_manh_trang_75",
+      "match": {"customer_contains_any": ["4 ORANGES", "4ORANGES"]},
+      "effect": {"dinh_luong_manh_trang_gm2": 75},
+      "note": "Định lượng mành trắng cho đơn hàng 4 Oranges = 75 g/m² (vs 70 default)."
+    },
+    {
+      "id": "tan_chau_neo_nam_keo_9415",
+      "match": {"customer_contains_any": ["TÂN CHÂU", "TAN CHAU", "NEO NAM VIỆT", "NEO NAM VIET"]},
+      "effect": {"glue": "9415_60_vistamax_40"},
+      "note": "Dùng keo 9415 (60%) + Vistamax (40%) thay cho F801C ở công đoạn Dán."
+    },
+    {
+      "id": "pe_rin_100pct_ldpe",
+      "match": {"spec_contains_any": ["PE rin", "PE rín", "túi PE rin"]},
+      "effect": {"thoi_ldpe_100pct": true, "thoi_no_taical": true},
+      "note": "Nếu YCSX là túi PE rin thì dùng 100% LDPE, không dùng taical ở công đoạn Thổi."
+    },
+    {
+      "id": "opp_dan_3114",
+      "match": {"bag_family": "opp"},
+      "effect": {"dan_keo_coeff": 3.114},
+      "note": "Đơn hàng Bao OPP (in ống đồng) dùng hệ số keo Dán 3.114 ( KP dùng 3.314)."
+    }
+  ]
+}

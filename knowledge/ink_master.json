@@ -1,0 +1,32 @@
+{
+  "_comment": "Ink master lists. OPP set extracted from 40KG example In!V18:W30. Flexo set from 25KG example. Used to populate the N ink color rows when the user answers 'số màu in'. Per-color kg is design-specific and left for the print shop (production) to fill.",
+  "opp": [
+    {"name": "Mực in OPP LW62 White (Trắng) Ariang", "code": "MOCLW62T00001"},
+    {"name": "Mực in OPP 79 Green (Xanh lá) Ariang", "code": "MOC79XL000001"},
+    {"name": "Mực in OPP LY11-23 Yellow (Vàng chanh) Arirang", "code": "MODALY11V0002"},
+    {"name": "Mực in OPP 94 Black (Đen) Ariang", "code": "MOC94D0000001"},
+    {"name": "Mực in OPP 39 Blue Arirang", "code": "MODLB39XD0001"},
+    {"name": "Mực in OPP 16 Red (Đỏ đậm) Arirang", "code": "MOD16DS000002"},
+    {"name": "Mực in OPP 11 Red (Đỏ cờ) Arirang", "code": "MOD11DC000001"},
+    {"name": "Mực in OPP 7549 (Vàng) Arirang (Bestmix)", "code": "MOC7549V00001"},
+    {"name": "Mực in OPP 83-2 (Tím) Violet Arirang", "code": "MOC832V000001"},
+    {"name": "Mực in OPP Cam 52 Arirang", "code": "MOC52C000001"},
+    {"name": "Mực in OPP Vàng 2454 (Bestmix)", "code": "MOS2454Y00001"},
+    {"name": "Mực in OPP Tím 2111C (Bestmix)", "code": "MOC2111CT0001"}
+  ],
+  "opp_common_lines": [
+    {"name": "Mực in OPP Medium Arirang", "code": "MOCLME2100001"},
+    {"name": "Mực OPP tái chế", "code": "MOPPHH0000001"}
+  ],
+  "flexo": [
+    {"name": "Mực in Flexo Đen 92", "code": "MFB92D0000001"},
+    {"name": "Mực in Flexo Nâu 7204N", "code": "MFBN7204NBXT001"},
+    {"name": "Mực in Flexo Đỏ 1379R", "code": "MFB1379R0000001"},
+    {"name": "Mực in Flexo Xanh 39", "code": "MFB39XD000001"},
+    {"name": "Mực in Flexo Vàng 23", "code": "MFBLV23X00001"}
+  ],
+  "flexo_common_lines": [
+    {"name": "Mực FLEXO tái chế", "code": "MFLEXHH0000001"}
+  ],
+  "usage": "After the user states số màu in = N, take the first N entries of the chosen list (or the specific colors they name) and write them into the ink rows of the 'In' sheet material table (columns C/D). Leave the kg (column G) blank for the print shop unless the order specifies amounts."
+}

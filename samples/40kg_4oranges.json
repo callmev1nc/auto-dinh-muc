@@ -1,0 +1,11 @@
+{
+  "_comment": "Reference order matching the 40KG 4 Oranges example. Tests the OPP path. Expected: sl_in=2983, màng BOPP=49.1407, dung môi OPP=12.5286/EA=5.3694.",
+  "customer": "CÔNG TY 4 ORANGES CO.,LTD",
+  "product_name": "4O BTA140 SPEC CEO PUTTY FOR INTERIOR 40KG",
+  "product_code": "XD1KH00565BP0011",
+  "order_id": "26BA2HKH00565000014",
+  "so_phieu_sx": "SX2607080",
+  "qty": 3000, "bag_length_m": 0.82, "width_plus_gusset_m": 0.5,
+  "width_cm": 42, "gusset_cm": 8, "inner_bag_weight_kg": 0.051, "kho_mang": 1.04,
+  "spec": "1.Kích thước: (42+8) cm x 82cm\n3. Cấu trúc: Bao BOPP in ống đồng - OPP mờ"
+}

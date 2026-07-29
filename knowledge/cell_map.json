@@ -1,0 +1,61 @@
+{
+  "_comment": "Maps template input cells to semantic field keys. Layout verified identical across OPP(40KG) & paper(25KG) examples. generate.py writes each field's value into every listed cell (clone-and-fill; only these cells change).",
+  "fields_used": [
+    "customer", "product_name", "product_code", "order_id", "so_phieu_sx",
+    "qty", "bag_length_m", "width_plus_gusset_m", "sl_in_thuc_te_m", "so_mau_in",
+    "kho_manh", "kho_mang", "kho_giay", "inner_bag_weight_kg",
+    "bag_type_label", "size_sx_mm", "size_tp_mm", "sl_theo_po_m", "thanh_pham_du_kien"
+  ],
+
+  "dinh_muc": {
+    "In": {
+      "_comment": "PHIẾU YÊU CẦU XUẤT KHO NVL — primary input + material-requisition sheet.",
+      "header": {"C5": "customer", "C6": "product_name", "C7": "product_code", "C8": "order_id", "C9": "so_phieu_sx"},
+      "info_table_M": {"M6": "qty", "M7": "bag_length_m", "M8": "width_plus_gusset_m", "M9": "sl_in_thuc_te_m", "M10": "so_mau_in", "M11": "kho_manh", "M12": "kho_mang", "M13": "kho_giay", "M14": "inner_bag_weight_kg"},
+      "info_table_C": {"C39": "qty", "C40": "bag_length_m", "C41": "width_plus_gusset_m", "C42": "sl_in_thuc_te_m", "C43": "so_mau_in", "C44": "kho_manh", "C45": "kho_mang", "C46": "kho_giay", "C47": "inner_bag_weight_kg"},
+      "thanh_pham": {"G29": "thanh_pham_du_kien"},
+      "materials_opp": {
+        "_rows": "A=org,B=stt,C=name,D=code,F=unit,G=qty",
+        "18": {"C": "Màng BOPP mờ K1040 18 mic", "D": "MB01810400001", "F": "Kg", "G": "mang_bopp_kg", "A": "Tổ in", "B": 1},
+        "19": {"F": "Mét", "G": "sl_in_thuc_te_m"},
+        "20": {"B": 2, "C": "Dung môi OPP", "D": "PDMTOLUENE001", "F": "Kg", "G": "dung_moai_opp_kg"},
+        "21": {"B": 3, "C": "Dung môi EA", "D": "PDMEA00001", "F": "Kg", "G": "dung_moai_ea_kg"},
+        "22_26": {"_comment": "ink color rows, count = so_mau_in; filled from ink_master.opp (cols C/D), G left blank for print shop"},
+        "27": {"B": 9, "C": "Mực in OPP Medium Arirang", "D": "MOCLME2100001", "F": "Kg"},
+        "28": {"B": 10, "C": "Mực OPP tái chế", "D": "MOPPHH0000001", "F": "Kg"}
+      },
+      "materials_paper_kp": {
+        "18": {"C": "Giấy Kraft {color} Nhật K{code} ĐL70", "D": "giay_kraft_code", "F": "Kg", "G": "giay_kraft_kg", "A": "Tổ in", "B": 1},
+        "19": {"F": "Mét", "G": "sl_in_thuc_te_m"},
+        "20_up": {"_comment": "flexo ink color rows, count = so_mau_in; from ink_master.flexo. Then 'Mực FLEXO tái chế' line."}
+      }
+    },
+
+    "May 1": {
+      "_comment": "LỆNH SẢN XUẤT — stage: May / lồng túi.",
+      "header": {"C5": "order_id", "C6": "product_code", "C7": "product_name", "C8": "customer"},
+      "stage": {"C16": "bag_type_label", "C17": "size_sx_mm", "C18": "size_tp_mm", "C19": "qty", "C20": "qty"}
+    },
+
+    "Chia biên 2": {
+      "_comment": "NHẬT KÝ SX — stage: Chia cuộn.",
+      "header": {"C5": "order_id", "C6": "product_code", "C7": "product_name", "C8": "customer"},
+      "stage": {"C16": "sl_theo_po_m", "G16": "sl_theo_po_m"}
+    },
+
+    "Dán 2": {
+      "_comment": "NHẬT KÝ SX — stage: Dán cắt. Glue materials rows 18-20 (B=name,D=code,E=ratio,F=unit,G=qty).",
+      "header": {"C5": "order_id", "C6": "product_code", "C7": "product_name", "C8": "customer"},
+      "stage": {"D16": "glue_total_kg", "_materials_rows_18_20": "from Dán formula (F801C/Vistamax 50-50, or 9415/Vistamax 60-40 for special customers)"}
+    }
+  },
+
+  "ycsx": {
+    "_comment": "PHIẾU YÊU CẦU SẢN XUẤT (QTKSX-BM01). One header block + N line-item rows (start row 13).",
+    "header": {"B6": "ngay_yc", "B7": "customer", "B8": "address", "B9": "customer_code", "B10": "order_id"},
+    "line_item_template": {
+      "_comment": "repeat per product line, starting row 13. Fields: B=stt,C=product_code,D=product_name,E=ma_code,F=spec,I=dvt,J=qty,K=ngay_giao,L=ghi_chu",
+      "B": "stt", "C": "product_code", "D": "product_name", "E": "ma_code", "F": "spec", "I": "dvt", "J": "qty"
+    }
+  }
+}
