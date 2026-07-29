@@ -269,12 +269,38 @@ class XlsxPatch:
         return text.encode("utf-8")
 
     # ---------- save ----------
+    def _strip_calc_chain(self):
+        # Drop the cached calc-chain. generate.py rewrites the input cells that
+        # the template's stage-sheet formulas depend on (e.g. In!G29/M9/M14), so
+        # the copied calcChain.xml + the dependent cells' cached <v> go stale ->
+        # Excel pops "Removed Records: Formula from /xl/calcChain.xml" and
+        # "repairs" the file. Excel rebuilds the chain silently when the part is
+        # absent (openpyxl never writes calcChain.xml for the same reason).
+        # Byte-surgical regex splice (same technique as set_value) — no ET
+        # round-trip, so no namespace re-serialization risk. No-op for YCSX.
+        if "xl/calcChain.xml" not in self._data:
+            return
+        self._data.pop("xl/calcChain.xml", None)
+        self.names = [n for n in self.names if n != "xl/calcChain.xml"]
+        ct = self._data["[Content_Types].xml"].decode("utf-8")
+        ct = re.sub(r'<Override PartName="/xl/calcChain.xml"[^>]*/>', '', ct)
+        self._data["[Content_Types].xml"] = ct.encode("utf-8")
+        wr = self._data["xl/_rels/workbook.xml.rels"].decode("utf-8")
+        wr = re.sub(r'<Relationship [^>]*Target="calcChain\.xml"[^>]*/>', '', wr)
+        self._data["xl/_rels/workbook.xml.rels"] = wr.encode("utf-8")
+        wb = self._data["xl/workbook.xml"].decode("utf-8")
+        if "fullCalcOnLoad" not in wb:
+            wb = re.sub(r'<calcPr\b([^>]*)/>',
+                        r'<calcPr\1 fullCalcOnLoad="1"/>', wb, count=1)
+            self._data["xl/workbook.xml"] = wb.encode("utf-8")
+
     def save(self, out_path: str):
         # Re-serialize styles.xml ONLY if set_fill changed it. generate.py never
         # calls set_fill, so styles.xml stays byte-identical to the template
         # (the prior unconditional re-serialize corrupted it on every save).
         if self._styles_dirty:
             self._data["xl/styles.xml"] = self._to_xml(self.styles_root)
+        self._strip_calc_chain()
         with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zo:
             for name in self.names:
                 zo.writestr(name, self._data[name])
