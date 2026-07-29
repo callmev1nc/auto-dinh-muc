@@ -18,6 +18,7 @@ auto-dinh-muc/
   xlsxpatch.py           # byte-faithful .xlsx editor (preserves images/styles)
   colour_25kg.py         # one-off: painted the 25KG file's inputs yellow
   PROJECT_INSTRUCTIONS.md# paste into the claude.ai Project's Custom Instructions
+  don_hang.bat / tao_don.py # 1-cú nhấp (Option C): hỏi file đơn + số màu in, chạy generate.py
   README_setup.md        # this file
   data/                  # the brain: constants, formulas, cell-map, rules, inks, dims
     constants.json standard_dims.json cell_map.json
@@ -44,11 +45,22 @@ auto-dinh-muc/
 2. Claude extracts fields, detects the bag family, asks **"Số màu in?"**.
 3. Claude runs `python generate.py --order <file> --colors N` and returns the 2 `.xlsx`.
 
-**Option B — in the claude.ai website Project:**
-1. Paste the order. Claude extracts, detects, asks **"Số màu in?"**, shows the computed
-   values, and writes you an `order.json` + the exact command.
-2. On your PC run: `python generate.py --order order.json --colors N`
-3. Collect the 2 files from `output/<date>/`.
+**Option B — in the claude.ai website Project (Vietnamese, 2 turns):**
+The Project's Custom Instructions (`PROJECT_INSTRUCTIONS.md`) lock it to a strict 2-turn flow:
+1. **Lượt 1:** you paste the order → Claude detects the bag family and asks **only**
+   *"Mặt hàng này in bao nhiêu màu? (số màu in)"*.
+2. **Lượt 2:** you answer N → Claude replies with **one** Vietnamese message: the inputs, the
+   computed material norms, a downloadable `order.json`, and one ready command
+   (`python generate.py --order order.json --colors N`). Then it stops — no extended chat.
+3. On your PC run that command → collect the 2 `.xlsx` from `output/<date>/`.
+
+> ⚠️ The website can't emit the binary `.xlsx` (it can't run code), so the `.xlsx` step happens
+> on your PC via that one line. If you want zero typing, use `don_hang.bat` (Option C below).
+
+**Option C — one-click on your PC (no typing, no chat):**
+Double-click **`don_hang.bat`**. It asks two things in Vietnamese — the order file (drag the
+YCSX/`.json` in) and *"Mặt hàng này in bao nhiêu màu?"* — then runs `generate.py` and opens the
+output folder with the 2 `.xlsx`. This is the true "2 files, no conversation" path.
 
 ## Command reference
 ```

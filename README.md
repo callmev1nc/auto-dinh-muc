@@ -30,7 +30,8 @@ data/                         the brain: constants, formulas, cell-map, rules, i
 templates/                    clone sources (2 Định mức + YCSX)
 knowledge/                    upload to the claude.ai Project as Knowledge
 samples/                      reference orders
-PROJECT_INSTRUCTIONS.md       paste into the Project's Custom Instructions
+PROJECT_INSTRUCTIONS.md       paste into the Project's Custom Instructions (Vietnamese, 2-turn)
+don_hang.bat / tao_don.py     1-click launcher (PC): asks order file + "số màu in", runs engine
 README_setup.md               full setup + daily-use guide
 ```
 

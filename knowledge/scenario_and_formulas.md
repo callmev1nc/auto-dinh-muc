@@ -1,5 +1,26 @@
 # Scenario & Formulas — Định mức / YCSX (Knowledge for the Claude Project)
 
+## Quy trình trả lời (BẮT BUỘC — tiếng Việt, chỉ 2 lượt)
+Luôn trả lời **tiếng Việt**, ngắn gọn. Mỗi đơn hàng đúng **2 lượt**, không viết bài phân tích dài.
+
+- **Lượt 1:** đọc đơn → nhận diện họ bao (OPP / giấy-KP) → hỏi **đúng một câu**:
+  *"Mặt hàng này in bao nhiêu màu? (số màu in)"*. Không hỏi gì khác, không giải thích.
+- **Lượt 2 (một tin nhắn duy nhất rồi DỪNG):** (1) một dòng họ bao + thông số đầu vào;
+  (2) bảng định mức vật tư đã tính; (3) file `order.json` (đính kèm); (4) một dòng lệnh
+  `python generate.py --order order.json --colors N`. Xong, dừng.
+
+**Số màu in → vật tư (phải tính đúng):**
+- OPP: `phế chồng màu` (1→200m, 2→300, 3→400, 4–6→500) cộng vào `sl_in` → đổi kg màng BOPP,
+  dung môi OPP, dung môi EA.
+- Giấy/KP: `sl_in = qty×L` (số màu không đổi sl_in).
+- Cả hai: ghi đúng **N dòng mực in** (N dòng đầu của ink master), cột kg để trống cho xưởng in.
+
+`order.json` phải đúng khóa: `customer, product_name, product_code, order_id, so_phieu_sx, qty,
+bag_length_m, width_plus_gusset_m, width_cm, gusset_cm, inner_bag_weight_kg, spec`
+(+ tùy chọn `bag_family, kho_mang, tolerance, ma_code`).
+
+---
+
 ## What the two output files are
 - **Định mức** workbook: 23 sheets = one per production stage. The key input sheet is
   **"In"** (PHIẾU YÊU CẦU XUẤT KHO NVL — material requisition). Other input sheets:
