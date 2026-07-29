@@ -12,6 +12,9 @@ output/
 ~$*
 *.tmp
 
+# Backups / build scratch
+*.bak
+
 # OS
 Thumbs.db
 .DS_Store

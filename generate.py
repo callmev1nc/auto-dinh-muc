@@ -20,9 +20,23 @@ from __future__ import annotations
 import argparse, json, os, sys, datetime, re, copy
 from xlsxpatch import XlsxPatch
 
+try:  # Windows console defaults to cp1252; force utf-8 so Vietnamese prints survive
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
+TEMPLATES = os.path.join(HERE, "templates")
 OUTDIR = os.path.join(HERE, "output")
+
+
+def template_path(key):
+    return os.path.join(TEMPLATES, {
+        "opp": "Định mức - OPP (Bao BOPP in ống đồng).xlsx",
+        "paper_kp": "Định mức - Bao giấy (KP - in offset).xlsx",
+        "ycsx": "YCSX.xlsx",
+    }[key])
 
 
 def load_json(name):
@@ -40,43 +54,82 @@ DIMS = load_json("standard_dims.json")
 
 # ---------------------------------------------------------------- parse order
 def parse_ycsx(path):
-    """Pull header + first line item from a YCSX .xlsx using openpyxl (read-only)."""
+    """Parse a YCSX .xlsx (read-only): header + ALL product line items.
+
+    Merge-aware: a cell covered by a merged range returns that range's top-left
+    value, so a shared spec such as F13:H15 applies to every product row beneath
+    it. Returns an order dict with header fields, a ``products`` list (one entry
+    per product row that carries a qty), and top-level single-product fields set
+    to the first product (backward-compat with --order / --sample callers).
+    """
     from openpyxl import load_workbook
+    from openpyxl.utils import range_boundaries, coordinate_to_tuple
     wb = load_workbook(path, data_only=True)
     ws = wb[wb.sheetnames[0]]
-    g = {}
-    for row in ws.iter_rows(values_only=False):
-        for c in row:
-            if isinstance(c.value, str):
-                g[c.coordinate] = c.value.strip()
-    def find(prefix):
-        for coord, val in g.items():
-            if val and val.strip().lower().startswith(prefix.lower()):
-                # value usually follows in the cell(s) to the right or after a ':'
-                tail = val.split(":", 1)[-1].strip()
-                return tail
-        return ""
-    # header labels live in column B
+
+    def cellv(coord):
+        """Value at coord, falling back to the top-left of a containing merge."""
+        val = ws[coord].value
+        if val is not None:
+            return val
+        cr, cc = coordinate_to_tuple(coord)
+        for mr in ws.merged_cells.ranges:
+            min_col, min_row, max_col, max_row = range_boundaries(str(mr))
+            if min_row <= cr <= max_row and min_col <= cc <= max_col:
+                return ws.cell(row=min_row, column=min_col).value
+        return None
+
+    # header labels live in column B as "N. Label: value"
+    g = {c.coordinate: c.value.strip()
+         for row in ws.iter_rows(values_only=False)
+         for c in row if isinstance(c.value, str)}
+
     def bval(label):
-        for coord, val in g.items():
+        for val in g.values():
             if val and val.startswith(label):
-                # take the part after the label/colon
                 return val.split(":", 1)[-1].strip() if ":" in val else ""
         return ""
+
     order = {
         "customer": bval("2. Khách hàng") or g.get("B7", ""),
         "address": bval("3. Địa chỉ"),
         "customer_code": bval("4. Mã khách hàng"),
         "order_id": bval("5. Số đơn hàng"),
         "ngay_yc": bval("1. Ngày yêu cầu"),
-        # line item (first data row, row 13)
-        "product_code": g.get("C13", ""),
-        "product_name": g.get("D13", ""),
-        "ma_code": g.get("E13", ""),
-        "spec": g.get("F13", ""),
-        "qty": _to_num(g.get("J13")),
     }
-    order.update(parse_spec(order.get("spec", "")))
+
+    # product rows start at 13: include any row with a numeric qty (col J) and a
+    # code/name. Stage-marker rows (MÀNH/IN/TRÁNG/...) carry no qty -> skipped.
+    products = []
+    for r in range(13, 41):
+        code, name = cellv(f"C{r}"), cellv(f"D{r}")
+        qty = _to_num(cellv(f"J{r}"))
+        if qty is None or not (code or name):
+            continue
+        products.append({
+            "product_code": str(code).strip() if code else "",
+            "product_name": str(name).strip() if name else "",
+            "ma_code": str(cellv(f"E{r}") or "").strip(),
+            "qty": qty,
+            "spec": str(cellv(f"F{r}") or "").strip().strip('"'),
+        })
+    if not products:  # legacy fallback: take row 13 verbatim
+        products = [{
+            "product_code": str(cellv("C13") or "").strip(),
+            "product_name": str(cellv("D13") or "").strip(),
+            "ma_code": str(cellv("E13") or "").strip(),
+            "qty": _to_num(cellv("J13")) or 0,
+            "spec": str(cellv("F13") or "").strip().strip('"'),
+        }]
+    order["products"] = products
+
+    # top-level single-product fields = first product (backward compat)
+    p0 = products[0]
+    order.update({
+        "product_code": p0["product_code"], "product_name": p0["product_name"],
+        "ma_code": p0["ma_code"], "qty": p0["qty"], "spec": p0["spec"],
+    })
+    order.update(parse_spec(p0["spec"]))
     return order
 
 
@@ -86,8 +139,8 @@ def parse_spec(spec):
     if not spec:
         return out
     s = spec.lower()
-    # dimensions like "(42+8) cm x 82cm" or "50x92 cm"
-    m = re.search(r"(\d+)\s*[\+]\s*(\d+)\s*cm\s*x\s*(\d+(?:\.\d+)?)\s*cm", spec)
+    # dimensions like "(42+8) cm x 82cm" (optional parens) or "50x92 cm"
+    m = re.search(r"\(?\s*(\d+)\s*\+\s*(\d+)\s*\)?\s*cm\s*x\s*(\d+(?:\.\d+)?)\s*cm", spec)
     if m:
         out["width_cm"] = int(m.group(1)); out["gusset_cm"] = int(m.group(2))
         out["width_plus_gusset_m"] = (int(m.group(1)) + int(m.group(2))) / 100
@@ -324,22 +377,72 @@ def fill_dinh_muc(template_path, family, fields, so_mau_in, out_path):
     return out_path
 
 
-def fill_ycsx(template_path, order, fields, out_path):
+def _single_product(order):
+    """Collapse a flat (single-product) order dict into one product record."""
+    return {
+        "product_code": order.get("product_code", ""),
+        "product_name": order.get("product_name", ""),
+        "ma_code": order.get("ma_code", ""),
+        "qty": order.get("qty"),
+        "spec": order.get("spec", ""),
+    }
+
+
+def _per_product_order(order, product):
+    """Build a compute()-ready order for one product (inherits header + shared dims)."""
+    po = {k: v for k, v in order.items() if k != "products"}
+    po.update(product)
+    po.update(parse_spec(product.get("spec", "")))
+    return po
+
+
+def fill_ycsx(template_path, order, out_path):
+    """Fill the YCSX form: header (label + value) + ALL product line items.
+
+    Stale template data (leftover products, stage markers, old header values,
+    old giao-hàng/notes) is cleared so output never leaks a previous order. The
+    shared spec is written into each product row's F cell; where F is the
+    top-left of a merge (e.g. F13:H15) that sets the merged display.
+    """
     xp = XlsxPatch(template_path)
     cm = CELLMAP["ycsx"]
-    sheet = xp.sheet_paths and list(xp.sheet_paths)[0]
-    for ref, field in cm["header"].items():
-        _set(xp, sheet, ref, order.get(field, fields.get(field)))
-    # first line item row 13
-    li = cm["line_item_template"]
-    row = 13
-    _set(xp, sheet, f"B{row}", 1)
-    _set(xp, sheet, f"C{row}", order.get("product_code"))
-    _set(xp, sheet, f"D{row}", order.get("product_name"))
-    _set(xp, sheet, f"E{row}", order.get("ma_code"))
-    _set(xp, sheet, f"F{row}", order.get("spec"))
-    _set(xp, sheet, f"I{row}", "Cái")
-    _set(xp, sheet, f"J{row}", order.get("qty"))
+    sheet = list(xp.sheet_paths)[0]
+
+    # header — always rewrite as "label: value" so stale values can't survive
+    labels = cm.get("header_labels") or {
+        "B6": "1. Ngày yêu cầu", "B7": "2. Khách hàng", "B8": "3. Địa chỉ",
+        "B9": "4. Mã khách hàng", "B10": "5. Số đơn hàng",
+    }
+    hfields = {"B6": "ngay_yc", "B7": "customer", "B8": "address",
+               "B9": "customer_code", "B10": "order_id"}
+    for ref, label in labels.items():
+        val = order.get(hfields.get(ref, ""), "") or ""
+        xp.set_value(sheet, ref, f"{label}: {val}".rstrip())
+
+    # product line items from row 13
+    products = order.get("products") or [_single_product(order)]
+    last_data_row = 12
+    for i, p in enumerate(products):
+        r = 13 + i
+        xp.set_value(sheet, f"B{r}", i + 1)
+        xp.set_value(sheet, f"C{r}", p.get("product_code", ""))
+        xp.set_value(sheet, f"D{r}", p.get("product_name", ""))
+        xp.set_value(sheet, f"E{r}", p.get("ma_code", ""))
+        xp.set_value(sheet, f"F{r}", p.get("spec", ""))
+        xp.set_value(sheet, f"I{r}", "Cái")
+        xp.set_value(sheet, f"J{r}", p.get("qty", ""))
+        last_data_row = r
+
+    # clear stale notes/schedule (K,L) across the whole product region, then
+    # clear B-J beyond the products written (leftover products + stage markers
+    # at 16-21 + giao-hàng at 23). Merged top-lefts (e.g. B23) clear on contact.
+    for r in range(13, 24):
+        xp.set_value(sheet, f"K{r}", "")
+        xp.set_value(sheet, f"L{r}", "")
+    for r in range(last_data_row + 1, 24):
+        for col in "BCDEFGHIJ":
+            xp.set_value(sheet, f"{col}{r}", "")
+
     xp.save(out_path)
     return out_path
 
@@ -357,57 +460,91 @@ SAMPLE_40KG = {
 }
 
 
+def run(source, colors, outdir=None):
+    """Generate one Định mức per product + one shared YCSX.
+
+    source: ("sample", None) | ("order", path) | ("ycsx", path) | ("dict", order_dict)
+    Returns {"family", "outdir", "outputs":[paths], "products":[{product_name, fields}]}.
+    Reused by the CLI (main) and by the web/claude.ai code-execution wrapper.
+    """
+    kind = source[0]
+    if kind == "sample":
+        order = copy.deepcopy(SAMPLE_40KG)
+    elif kind == "order":
+        with open(source[1], encoding="utf-8") as f:
+            order = json.load(f)
+    elif kind == "ycsx":
+        order = parse_ycsx(source[1])
+    elif kind == "dict":
+        order = copy.deepcopy(source[1])
+    else:
+        raise ValueError(f"bad source kind {kind!r}")
+
+    products = order.get("products") or [_single_product(order)]
+    order["products"] = products
+    family = order.get("bag_family") or detect_family(order)
+
+    outdir = outdir or os.path.join(OUTDIR, datetime.date.today().isoformat())
+    os.makedirs(outdir, exist_ok=True)
+    tmpl = template_path(family)
+
+    outputs, summary = [], []
+    for product in products:
+        porder = _per_product_order(order, product)
+        fields = compute(porder, family, colors)
+        safe = re.sub(r"[^0-9A-Za-z]+", "-", product.get("product_name") or "order")[:40]
+        dm_out = os.path.join(outdir, f"Định mức - {safe} - {order.get('order_id','')}.xlsx")
+        fill_dinh_muc(tmpl, family, fields, colors, dm_out)
+        outputs.append(dm_out)
+        summary.append({"product_name": product.get("product_name"), "fields": fields})
+
+    ycsx_safe = re.sub(r"[^0-9A-Za-z]+", "-",
+                       order.get("product_name") or products[0].get("product_name") or "order")[:40]
+    ycsx_out = os.path.join(outdir, f"YCSX - {ycsx_safe} - {order.get('order_id','')}.xlsx")
+    fill_ycsx(template_path("ycsx"), order, ycsx_out)
+    outputs.append(ycsx_out)
+
+    return {"family": family, "outdir": outdir, "outputs": outputs, "products": summary}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--order", help="path to order JSON")
     ap.add_argument("--ycsx", help="path to a YCSX .xlsx to parse")
     ap.add_argument("--sample", action="store_true", help="use built-in 40KG sample")
     ap.add_argument("--colors", type=int, help="pre-answer số màu in (skips the prompt)")
+    ap.add_argument("--outdir", help="output directory (default: output/<today/>)")
     args = ap.parse_args()
 
     if args.sample:
-        order = copy.deepcopy(SAMPLE_40KG)
+        source = ("sample", None)
     elif args.order:
-        with open(args.order, encoding="utf-8") as f:
-            order = json.load(f)
+        source = ("order", args.order)
     elif args.ycsx:
-        order = parse_ycsx(args.ycsx)
+        source = ("ycsx", args.ycsx)
     else:
         ap.error("provide --order, --ycsx, or --sample")
-
-    family = order.get("bag_family") or detect_family(order)
-    print(f"Detected bag family: {family}  (template: {BAG['families'][family]['_aka']})")
 
     if args.colors is not None:
         so_mau_in = args.colors
     else:
         so_mau_in = int(input("Số màu in? (number of print colors — the only unknown): ").strip() or "0")
-    print(f"số màu in = {so_mau_in}")
 
-    fields = compute(order, family, so_mau_in)
-    print("\nComputed values:")
-    for k in ("qty", "bag_length_m", "width_plus_gusset_m", "sl_in_thuc_te_m", "so_mau_in",
-              "kho_manh", "kho_mang", "kho_giay", "inner_bag_weight_kg"):
-        print(f"  {k:24s} = {fields.get(k)}")
-    for k in ("mang_bopp_kg", "dung_moai_opp_kg", "dung_moai_ea_kg", "giay_kraft_kg", "glue_total_kg"):
-        if k in fields:
-            print(f"  {k:24s} = {fields.get(k)}")
-
-    today = datetime.date.today().isoformat()
-    outdir = os.path.join(OUTDIR, today)
-    os.makedirs(outdir, exist_ok=True)
-    tmpl = os.path.join(HERE, "templates", {
-        "opp": "Định mức - OPP (Bao BOPP in ống đồng).xlsx",
-        "paper_kp": "Định mức - Bao giấy (KP - in offset).xlsx",
-    }[family])
-    safe = re.sub(r"[^0-9A-Za-z]+", "-", order.get("product_name", "order"))[:40]
-    dm_out = os.path.join(outdir, f"Định mức - {safe} - {order.get('order_id','')}.xlsx")
-    ycsx_out = os.path.join(outdir, f"YCSX - {safe} - {order.get('order_id','')}.xlsx")
-
-    fill_dinh_muc(tmpl, family, fields, so_mau_in, dm_out)
-    fill_ycsx(os.path.join(HERE, "templates", "YCSX.xlsx"), order, fields, ycsx_out)
-    print(f"\n✓ Định mức: {dm_out}")
-    print(f"✓ YCSX:     {ycsx_out}")
+    res = run(source, so_mau_in, outdir=args.outdir)
+    print(f"Detected bag family: {res['family']}  (template: {BAG['families'][res['family']]['_aka']})")
+    print(f"số màu in = {so_mau_in}\n")
+    for p in res["products"]:
+        f = p["fields"]
+        print(f"== {p['product_name']} ==")
+        for k in ("qty", "bag_length_m", "width_plus_gusset_m", "sl_in_thuc_te_m", "so_mau_in",
+                  "kho_manh", "kho_mang", "kho_giay", "inner_bag_weight_kg"):
+            print(f"  {k:24s} = {f.get(k)}")
+        for k in ("mang_bopp_kg", "dung_moai_opp_kg", "dung_moai_ea_kg", "giay_kraft_kg", "glue_total_kg"):
+            if k in f:
+                print(f"  {k:24s} = {f.get(k)}")
+    print("\nGenerated files:")
+    for path in res["outputs"]:
+        print("  ✓", path)
 
 
 if __name__ == "__main__":

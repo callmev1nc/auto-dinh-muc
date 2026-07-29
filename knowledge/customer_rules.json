@@ -18,12 +18,6 @@
       "match": {"spec_contains_any": ["PE rin", "PE rín", "túi PE rin"]},
       "effect": {"thoi_ldpe_100pct": true, "thoi_no_taical": true},
       "note": "Nếu YCSX là túi PE rin thì dùng 100% LDPE, không dùng taical ở công đoạn Thổi."
-    },
-    {
-      "id": "opp_dan_3114",
-      "match": {"bag_family": "opp"},
-      "effect": {"dan_keo_coeff": 3.114},
-      "note": "Đơn hàng Bao OPP (in ống đồng) dùng hệ số keo Dán 3.114 ( KP dùng 3.314)."
     }
   ]
 }
