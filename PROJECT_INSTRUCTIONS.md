@@ -47,12 +47,12 @@ Người dùng trả lời số màu in = N. Dùng code execution sandbox để:
    ```
    (Nếu `generate.py` ở thư mục gốc thì dùng `python generate.py` thay vì `python kit/generate.py`.)
 
-4. **Nén kết quả** và cung cấp file để tải về:
+4. **Đính kèm file zip** — engine đã nén sẵn kết quả thành **một** file
+   `out/Dinh_muc_YCSX_<order_id>.zip`. Đính kèm trực tiếp file đó (KHÔNG nén lại):
    ```python
-   import shutil
-   shutil.make_archive("dinh_muc_output", "zip", "out")
+   import glob
+   zip_path = glob.glob("out/*.zip")[0]   # engine đã nén sẵn
    ```
-   Đính kèm file `dinh_muc_output.zip` trong tin nhắn.
 
 5. In **một đoạn ngắn** tiếng Việt: họ bao, các sản phẩm, sl_in, định mức vật tư chính (kg).
    **Một tin nhắn duy nhất. Xong. DỪNG.**

@@ -17,6 +17,7 @@ Public API:
 from __future__ import annotations
 import re, zipfile, shutil
 import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape
 from copy import deepcopy
 
 MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -38,6 +39,9 @@ for pfx, uri in [
     ET.register_namespace(pfx, uri)
 
 _RE_CELL = re.compile(r"^([A-Z]+)(\d+)$")
+# ET reserves these prefixes for its own generated substitutes (ns0, ns1, …)
+# and the xml prefix is built-in; never try to register them.
+_NS_RESERVED = re.compile(r"^(?:ns\d+|xml)$")
 
 
 def _ref(ref):
@@ -54,8 +58,29 @@ class XlsxPatch:
         self.names = self.zf.namelist()
         self._data = {n: self.zf.read(n) for n in self.names}
         self.zf.close()
+        self._register_doc_namespaces()
         self._read_workbook()
         self._read_styles()
+        self._styles_dirty = False
+
+    # ---------- namespaces ----------
+    def _register_doc_namespaces(self):
+        # Bind every xmlns prefix declared in this workbook to its original name
+        # so ElementTree re-serializes with the SAME prefixes. Without this, ET
+        # invents ns0:/ns1: substitutes for namespaces it doesn't know (xr,
+        # x16r2, xcalcf, ...) while leaving mc:Ignorable="x14ac x16r2 xr xr9"
+        # naming the originals -> Excel rejects the part ("part with XML error").
+        for name, data in self._data.items():
+            if not (name.endswith(".xml") or name.endswith(".rels")):
+                continue
+            text = data.decode("utf-8", "ignore")
+            for pfx, uri in re.findall(r'xmlns:([A-Za-z0-9_.\-]+)="([^"]+)"', text):
+                if _NS_RESERVED.match(pfx):
+                    continue
+                try:
+                    ET.register_namespace(pfx, uri)
+                except ValueError:
+                    pass
 
     # ---------- workbook / sheet path resolution ----------
     def _read_workbook(self):
@@ -143,6 +168,9 @@ class XlsxPatch:
 
     # ---------- public ops ----------
     def set_fill(self, sheet: str, ref: str, rgb: str):
+        # ponytail: still ET-round-trips this sheet + styles. Only the dev script
+        # colour_25kg.py calls this; generate.py's production path never does.
+        self._styles_dirty = True
         sroot = self._sheet_root(sheet)
         c = self._find_cell(sroot, ref)
         if c is None:
@@ -150,34 +178,47 @@ class XlsxPatch:
         fill_id = self._ensure_fill(rgb)
         new_xf = self._xf_with_fill(self._cell_style_index(c), fill_id)
         c.set("s", str(new_xf))
-        self._data[self.sheet_paths[sheet]] = ET.tostring(sroot, encoding="utf-8", xml_declaration=True)
+        self._data[self.sheet_paths[sheet]] = self._to_xml(sroot)
         return True
 
     def set_value(self, sheet: str, ref: str, value):
-        sroot = self._sheet_root(sheet)
-        c = self._find_cell(sroot, ref)
-        if c is None:
+        # ponytail: byte-surgical splice — touch ONLY the target <c> element in
+        # the raw sheet XML. Every other byte (xmlns declarations, mc:Ignorable,
+        # images, merges) stays identical to the template, so Excel can never
+        # reject the part (the prior ET round-trip renamed/dropped namespaces
+        # like xr/xr2/xr9 and left mc:Ignorable dangling -> "part with XML error").
+        # Ceiling: assumes one <c> per ref and a single-line <c ...> opening tag
+        # (true for these Excel-generated templates). Not a general OOXML editor.
+        key = self.sheet_paths[sheet]
+        xml = self._data[key].decode("utf-8")
+        target = 'r="%s"' % ref
+        tag = None
+        for m in re.finditer(r"<c\b[^>]*>", xml):
+            if target in m.group(0):
+                tag = m
+                break
+        if tag is None:
             return False
-        # strip existing value children
-        for tag in ("v", "is"):
-            e = c.find(NS + tag)
-            if e is not None:
-                c.remove(e)
-        # drop formulas
-        f = c.find(NS + "f")
-        if f is not None:
-            c.remove(f)
+        opener = tag.group(0)
+        start = tag.start()
+        if opener.rstrip().endswith("/>"):          # self-closing cell
+            end = tag.end()
+        else:                                        # <c ...>...</c>
+            close = xml.find("</c>", tag.end())
+            if close == -1:
+                return False
+            end = close + 4
+        sm = re.search(r'\bs="(\d+)"', opener)       # preserve cell style
+        s_attr = ' s="%s"' % sm.group(1) if sm else ""
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            c.attrib.pop("t", None)
-            v = ET.SubElement(c, NS + "v")
-            v.text = repr(value) if isinstance(value, float) else str(value)
-        else:
-            c.set("t", "inlineStr")
-            is_el = ET.SubElement(c, NS + "is")
-            t = ET.SubElement(is_el, NS + "t")
-            t.text = " " + str(value) if str(value).startswith((" ", "\n")) else str(value)
-            t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
-        self._data[self.sheet_paths[sheet]] = ET.tostring(sroot, encoding="utf-8", xml_declaration=True)
+            num = repr(value) if isinstance(value, float) else str(value)
+            new_cell = '<c r="%s"%s><v>%s</v></c>' % (ref, s_attr, num)
+        elif value == "" or value is None:           # clear the cell (keep style)
+            new_cell = '<c r="%s"%s/>' % (ref, s_attr)
+        else:                                        # string -> inlineStr
+            new_cell = ('<c r="%s"%s t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>'
+                        % (ref, s_attr, escape(str(value))))
+        self._data[key] = (xml[:start] + new_cell + xml[end:]).encode("utf-8")
         return True
 
     def get_fill(self, sheet: str, ref: str):
@@ -197,10 +238,43 @@ class XlsxPatch:
         fg = pf.find(NS + "fgColor")
         return fg.get("rgb") if fg is not None else None
 
+    # ---------- serialization ----------
+    def _to_xml(self, root: ET.Element) -> bytes:
+        """Serialize `root`, then strip markup-compatibility ghosts.
+
+        ElementTree drops xmlns declarations for namespaces no element/attribute
+        uses. mc:Ignorable="x14ac x16r2 xr xr9" (and mc:Choice/@Requires) still
+        name those prefixes though — it's an attribute value, ET won't rewrite
+        it — so Excel rejects the part ('part with XML error'). We drop any token
+        whose prefix isn't actually declared in the part. Safe: an ignorable
+        entry for a namespace that never appears in the part is meaningless.
+        """
+        return self._sanitize_mc(ET.tostring(root, encoding="utf-8", xml_declaration=True))
+
+    @staticmethod
+    def _sanitize_mc(xml_bytes: bytes) -> bytes:
+        text = xml_bytes.decode("utf-8")
+        declared = set(re.findall(r'xmlns:([A-Za-z0-9_.\-]+)=', text))
+
+        def _keep(attr, value):
+            toks = [t for t in value.split() if t in declared]
+            return ('%s="%s"' % (attr, " ".join(toks))) if toks else ""
+
+        text = re.sub(r'mc:Ignorable="([^"]*)"',
+                      lambda m: _keep("mc:Ignorable", m.group(1)), text)
+        text = re.sub(r'(?<= )Requires="([^"]*)"',
+                      lambda m: _keep("Requires", m.group(1)), text)
+        # collapse the double space left where an attribute was fully removed
+        text = re.sub(r'  +', ' ', text).replace(' />', '/>').replace(' >', '>')
+        return text.encode("utf-8")
+
     # ---------- save ----------
     def save(self, out_path: str):
-        # re-serialize styles.xml (fills/xfs may have changed)
-        self._data["xl/styles.xml"] = ET.tostring(self.styles_root, encoding="utf-8", xml_declaration=True)
+        # Re-serialize styles.xml ONLY if set_fill changed it. generate.py never
+        # calls set_fill, so styles.xml stays byte-identical to the template
+        # (the prior unconditional re-serialize corrupted it on every save).
+        if self._styles_dirty:
+            self._data["xl/styles.xml"] = self._to_xml(self.styles_root)
         with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zo:
             for name in self.names:
                 zo.writestr(name, self._data[name])
