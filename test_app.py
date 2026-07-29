@@ -50,10 +50,11 @@ if st.button("Generate", type="primary"):
 
                 res = run(source, colors, outdir=os.path.join(tmp, "out"))
 
-                downloads = []
+                zip_data = None
                 for path in res["outputs"]:
                     with open(path, "rb") as f:
-                        downloads.append((os.path.basename(path), f.read()))
+                        zip_data = f.read()
+                        zip_name = os.path.basename(path)
 
             st.success(f"Bag family: **{res['family']}** | Products: **{len(res['products'])}**")
             for p in res["products"]:
@@ -69,9 +70,9 @@ if st.button("Generate", type="primary"):
                         if v is not None:
                             st.code(f"{k:24s} = {v}")
 
-            st.subheader("📥 Download outputs")
-            for name, data in downloads:
-                st.download_button(f"⬇ {name}", data=data, file_name=name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.subheader("📥 Tải xuống tất cả")
+            if zip_data:
+                st.download_button("⬇ Tải xuống (ZIP)", data=zip_data, file_name=zip_name, mime="application/zip")
 
         except Exception:
             st.error("### ❌ Error occurred")

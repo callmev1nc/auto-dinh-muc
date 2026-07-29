@@ -4,7 +4,7 @@
     "opp": {
       "_aka": "Bao BOPP in ống đồng (40KG putty bags, e.g. 4 Oranges)",
       "template": "templates/Định mức - OPP (Bao BOPP in ống đồng).xlsx",
-      "name_keywords": ["BOPP", "OPP", "in ống đồng", "in ong dong"],
+      "name_keywords": ["BOPP", "OPP", "in ống đồng", "in ong dong", "40kg", "40KG", "40Kg"],
       "spec_keywords": ["BOPP", "OPP mờ", "OPP bóng", "in ống đồng"],
       "weight_hint_kg": 40,
       "print": "ong_dong",
@@ -14,7 +14,7 @@
     "paper_kp": {
       "_aka": "Bao KP / Bao giấy in flexo (25KG, e.g. Tân Châu AM-20)",
       "template": "templates/Định mức - Bao giấy (KP / in offset).xlsx",
-      "name_keywords": ["bao giấy", "bao kp", "in flexo", "kraft", "AM-20", "AM-25"],
+      "name_keywords": ["bao giấy", "bao kp", "in flexo", "kraft", "AM-20", "AM-25", "25kg", "25KG", "25Kg"],
       "spec_keywords": ["Bao KP in Flexo", "Giấy Kraft", "Bao in offset", "in flexo"],
       "weight_hint_kg": 25,
       "print": "flexo",

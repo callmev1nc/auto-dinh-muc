@@ -17,7 +17,7 @@ USAGE:
   python generate.py --order order.json --colors 3 # pre-answer the only question
 """
 from __future__ import annotations
-import argparse, json, os, sys, datetime, re, copy
+import argparse, json, os, sys, datetime, re, copy, zipfile
 from xlsxpatch import XlsxPatch
 
 try:  # Windows console defaults to cp1252; force utf-8 so Vietnamese prints survive
@@ -167,7 +167,11 @@ def _to_num(v):
 
 # ------------------------------------------------------------ detect bag family
 def detect_family(order):
-    text = " ".join([str(order.get("product_name", "")), str(order.get("spec", ""))]).lower()
+    text = " ".join([
+        str(order.get("customer", "")),
+        str(order.get("product_name", "")),
+        str(order.get("spec", "")),
+    ]).lower()
     opp = BAG["families"]["opp"]
     kp = BAG["families"]["paper_kp"]
     if any(k.lower() in text for k in opp["name_keywords"] + opp["spec_keywords"]):
@@ -175,7 +179,7 @@ def detect_family(order):
     if any(k.lower() in text for k in kp["name_keywords"] + kp["spec_keywords"]):
         return "paper_kp"
     # fallback by weight token
-    mw = re.search(r"(\d{2,3})\s*kg", text)
+    mw = re.search(r"(\d{2,3})\s*kgs?", text)
     if mw:
         w = int(mw.group(1))
         return "opp" if w >= 35 else "paper_kp"
@@ -504,7 +508,12 @@ def run(source, colors, outdir=None):
     fill_ycsx(template_path("ycsx"), order, ycsx_out)
     outputs.append(ycsx_out)
 
-    return {"family": family, "outdir": outdir, "outputs": outputs, "products": summary}
+    zip_path = os.path.join(outdir, f"Dinh_muc_YCSX_{order.get('order_id','order')}.zip")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fpath in outputs:
+            zf.write(fpath, os.path.basename(fpath))
+
+    return {"family": family, "outdir": outdir, "outputs": [zip_path], "products": summary}
 
 
 def main():
