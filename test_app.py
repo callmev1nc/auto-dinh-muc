@@ -50,6 +50,11 @@ if st.button("Generate", type="primary"):
 
                 res = run(source, colors, outdir=os.path.join(tmp, "out"))
 
+                downloads = []
+                for path in res["outputs"]:
+                    with open(path, "rb") as f:
+                        downloads.append((os.path.basename(path), f.read()))
+
             st.success(f"Bag family: **{res['family']}** | Products: **{len(res['products'])}**")
             for p in res["products"]:
                 f = p["fields"]
@@ -65,10 +70,8 @@ if st.button("Generate", type="primary"):
                             st.code(f"{k:24s} = {v}")
 
             st.subheader("📥 Download outputs")
-            for path in res["outputs"]:
-                name = os.path.basename(path)
-                with open(path, "rb") as f:
-                    st.download_button(f"⬇ {name}", data=f, file_name=name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            for name, data in downloads:
+                st.download_button(f"⬇ {name}", data=data, file_name=name, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
         except Exception:
             st.error("### ❌ Error occurred")
