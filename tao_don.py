@@ -38,11 +38,17 @@ def main():
     except ValueError:
         print("So mau in phai la so nguyen.")
         return 1
+    if n < 1:
+        print("So mau in phai >= 1.")
+        return 1
 
     flag = "--ycsx" if path.lower().endswith((".xlsx", ".xls")) else "--order"
     cmd = [sys.executable, os.path.join(HERE, "generate.py"), flag, path, "--colors", str(n)]
     print("\nDang tao file...\n  " + " ".join(cmd))
     rc = subprocess.call(cmd)
+    if rc == 2:
+        print("\n(Thieu du lieu dau vao — xem chi tiet phia tren.)")
+        return rc
     if rc != 0:
         print("\nLoi khi chay generate.py (ma %d)." % rc)
         return rc

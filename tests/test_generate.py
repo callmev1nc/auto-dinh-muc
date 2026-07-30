@@ -283,3 +283,136 @@ class Test40KgOpp:
         for r in range(22, 27):
             v = _num(self.ws, f"G{r}")
             assert v is None or v == 0, f"In!G{r}={v} should be blank"
+
+
+class TestInputParsing:
+    """Tests for _parse_qty, _extract_pe_liner_weight, validate_inputs."""
+
+    def test_parse_qty_none_empty(self):
+        from generate import _parse_qty
+        assert _parse_qty(None) is None
+        assert _parse_qty("") is None
+
+    def test_parse_qty_int_passthrough(self):
+        from generate import _parse_qty
+        assert _parse_qty(5000) == 5000
+        assert _parse_qty(0) == 0
+
+    def test_parse_qty_plain_int_str(self):
+        from generate import _parse_qty
+        assert _parse_qty("5000") == 5000
+
+    def test_parse_qty_vn_thousands_dot(self):
+        from generate import _parse_qty
+        assert _parse_qty("5.000") == 5000
+
+    def test_parse_qty_vn_thousands_comma(self):
+        from generate import _parse_qty
+        assert _parse_qty("5,000") == 5000
+
+    def test_parse_qty_multiple_dots(self):
+        from generate import _parse_qty
+        assert _parse_qty("1.234.567") == 1234567
+
+    def test_parse_qty_decimal_dot(self):
+        from generate import _parse_qty
+        assert _parse_qty("0.85") == 0.85
+
+    def test_parse_qty_decimal_comma(self):
+        from generate import _parse_qty
+        assert _parse_qty("1,5") == 1.5
+
+    def test_extract_pe_liner_4oranges_spec(self):
+        from generate import _extract_pe_liner_weight
+        spec = ("5. Quy cách lồng túi PE: Lồng túi PE thường 50gr 50x100cm (MTLS)")
+        result = _extract_pe_liner_weight(spec)
+        assert result == 0.05, f"Expected 0.05, got {result}"
+
+    def test_extract_pe_liner_tui_long_50gram(self):
+        from generate import _extract_pe_liner_weight
+        result = _extract_pe_liner_weight("túi lồng 50gram")
+        assert result == 0.05, f"Expected 0.05, got {result}"
+
+    def test_extract_pe_liner_ignores_bag_capacity(self):
+        from generate import _extract_pe_liner_weight
+        assert _extract_pe_liner_weight("Bao KP 25kg") is None
+        assert _extract_pe_liner_weight("40KG") is None
+
+    def test_parse_spec_with_liner(self):
+        from generate import parse_spec
+        spec = ("1.Kích thước: (42+8) cm x 82cm\n"
+                "5. Quy cách lồng túi PE: Lồng túi PE thường 50gr 50x100cm")
+        out = parse_spec(spec)
+        assert out.get("width_cm") == 42
+        assert out.get("gusset_cm") == 8
+        assert out.get("inner_bag_weight_kg") == 0.05
+
+    def test_parse_spec_kp_no_liner(self):
+        from generate import parse_spec
+        out = parse_spec("55 x 85 cm")
+        assert out.get("width_plus_gusset_m") == 0.55
+        assert out.get("bag_length_m") == 0.85
+        assert "inner_bag_weight_kg" not in out
+
+    def test_validate_inputs_raises_on_zero_qty(self):
+        from generate import validate_inputs, InputValidationError
+        import copy
+        order = copy.deepcopy(SAMPLE_25KG)
+        order["qty"] = 0
+        try:
+            validate_inputs(order, "paper_kp", 2)
+            assert False, "expected InputValidationError"
+        except InputValidationError as e:
+            assert "J13" in str(e)
+
+    def test_validate_inputs_raises_on_zero_colors(self):
+        from generate import validate_inputs, InputValidationError
+        try:
+            validate_inputs(SAMPLE_25KG, "paper_kp", 0)
+            assert False, "expected InputValidationError"
+        except InputValidationError as e:
+            assert "so_mau_in" in str(e)
+
+    def test_validate_inputs_raises_on_missing_liner_ibw(self):
+        from generate import validate_inputs, InputValidationError
+        order = dict(SAMPLE_25KG)
+        order["spec"] = "55 x 85 cm\nLồng túi PE thường 50gr"
+        order["product_name"] = "Bao KP"
+        del order["inner_bag_weight_kg"]
+        try:
+            validate_inputs(order, "paper_kp", 2)
+            assert False, "expected InputValidationError"
+        except InputValidationError as e:
+            assert "túi lồng" in str(e) or "inner_bag_weight" in str(e)
+
+    def test_validate_inputs_opp_missing_kho_mang(self):
+        from generate import validate_inputs, InputValidationError
+        order = dict(SAMPLE_40KG)
+        del order["kho_mang"]
+        order["width_cm"] = 0
+        order["gusset_cm"] = 0
+        try:
+            validate_inputs(order, "opp", 3)
+            assert False, "expected InputValidationError"
+        except InputValidationError as e:
+            assert "kho_mang" in str(e)
+
+    def test_validate_inputs_valid_sample_passes(self):
+        from generate import validate_inputs
+        # SAMPLE_25KG is paper_kp, colors=2, has valid ibw
+        validate_inputs(SAMPLE_25KG, "paper_kp", 2)
+
+    def test_ycsx_parse_4oranges(self):
+        ycsx_path = os.path.join(HERE, "..", "samples", "YCSX_4oranges.xlsx")
+        if not os.path.isfile(ycsx_path):
+            import pytest
+            pytest.skip("YCSX_4oranges.xlsx not found")
+        from generate import parse_ycsx
+        order = parse_ycsx(ycsx_path)
+        assert order.get("customer") == "CÔNG TY 4 ORANGES CO.,LTD"
+        products = order.get("products", [])
+        assert len(products) >= 1
+        # first product: qty=5000
+        assert products[0].get("qty") == 5000, f"qty={products[0].get('qty')}"
+        assert order.get("inner_bag_weight_kg") == 0.05, \
+            f"ibw={order.get('inner_bag_weight_kg')}"

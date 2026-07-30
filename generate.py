@@ -24,6 +24,10 @@ try:  # Windows console defaults to cp1252; force utf-8 so Vietnamese prints sur
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
     pass
+try:
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
@@ -103,7 +107,7 @@ def parse_ycsx(path):
     products = []
     for r in range(13, 41):
         code, name = cellv(f"C{r}"), cellv(f"D{r}")
-        qty = _to_num(cellv(f"J{r}"))
+        qty = _parse_qty(cellv(f"J{r}"))
         if qty is None or not (code or name):
             continue
         products.append({
@@ -118,7 +122,7 @@ def parse_ycsx(path):
             "product_code": str(cellv("C13") or "").strip(),
             "product_name": str(cellv("D13") or "").strip(),
             "ma_code": str(cellv("E13") or "").strip(),
-            "qty": _to_num(cellv("J13")) or 0,
+            "qty": _parse_qty(cellv("J13")) or 0,
             "spec": str(cellv("F13") or "").strip().strip('"'),
         }]
     order["products"] = products
@@ -130,6 +134,10 @@ def parse_ycsx(path):
         "ma_code": p0["ma_code"], "qty": p0["qty"], "spec": p0["spec"],
     })
     order.update(parse_spec(p0["spec"]))
+    if not order.get("inner_bag_weight_kg"):
+        ibw = _extract_pe_liner_weight(p0.get("product_name", ""))
+        if ibw is not None:
+            order["inner_bag_weight_kg"] = ibw
     return order
 
 
@@ -150,6 +158,9 @@ def parse_spec(spec):
         if m:
             out["width_plus_gusset_m"] = float(m.group(1)) / 100
             out["bag_length_m"] = float(m.group(2)) / 100
+    ibw = _extract_pe_liner_weight(spec)
+    if ibw is not None:
+        out["inner_bag_weight_kg"] = ibw
     return out
 
 
@@ -163,6 +174,58 @@ def _to_num(v):
             return float(v)
         except Exception:
             return None
+
+
+_LINER_KW = ("lồng túi", "túi lồng", "pe thường", "pe rin", "pe lồng")
+
+
+def _extract_pe_liner_weight(text):
+    if not text:
+        return None
+    t = text.lower()
+    if not any(k in t for k in _LINER_KW):
+        return None
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:gr|gram|grams|g)\b", t)
+    if m:
+        grams = float(m.group(1).replace(",", "."))
+        return grams / 1000
+    return None
+
+
+def _parse_qty(v):
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)):
+        return v
+    s = str(v).strip().replace(" ", "")
+    dots = s.count(".")
+    commas = s.count(",")
+    if dots == 0 and commas == 0:
+        try:
+            return int(s) if s.isdigit() else float(s)
+        except ValueError:
+            return None
+    if dots > 0 and commas > 0:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif commas > 0:
+        parts = s.split(",")
+        if commas == 1 and len(parts[-1]) <= 2:
+            s = s.replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif dots > 0:
+        parts = s.split(".")
+        if dots == 1 and len(parts[-1]) <= 2:
+            pass
+        else:
+            s = s.replace(".", "")
+    try:
+        return int(s) if "." not in s else float(s)
+    except ValueError:
+        return None
 
 
 # ------------------------------------------------------------ detect bag family
@@ -201,6 +264,33 @@ def apply_rules(order, family):
     return ov
 
 
+# ---------------------------------------------------------------- validation gate
+class InputValidationError(ValueError):
+    pass
+
+
+def validate_inputs(order, family, so_mau_in):
+    errors = []
+    if float(order.get("qty") or 0) <= 0:
+        errors.append("- SL (cột J13, J14… trong phiếu YCSX) phải > 0")
+    if float(order.get("bag_length_m") or 0) <= 0:
+        errors.append("- Kích thước dài (bag_length_m) không hợp lệ — kiểm tra dòng 'Kích thước' trong spec")
+    if float(order.get("width_plus_gusset_m") or 0) <= 0:
+        errors.append("- Kích thước ngang (width_plus_gusset_m) không hợp lệ — kiểm tra dòng 'Kích thước' trong spec")
+    if so_mau_in < 1:
+        errors.append("- Số màu in (so_mau_in) phải ≥ 1 — nhập số màu thực tế")
+    text = (str(order.get("spec", "")) + " " + str(order.get("product_name", ""))).lower()
+    has_liner = any(k in text for k in _LINER_KW)
+    if has_liner and float(order.get("inner_bag_weight_kg") or 0) <= 0:
+        errors.append("- inner_bag_weight_kg (Quy cách lồng túi PE) không hợp lệ — kiểm tra dòng 'Quy cách lồng túi PE' trong spec")
+    if family == "opp":
+        km = order.get("kho_mang") or _dims_lookup(order, "mang_in_cm")
+        if not km:
+            errors.append("- Khổ màng (kho_mang) phải xác định và > 0 đối với bao OPP — kiểm tra kích thước trong spec")
+    if errors:
+        raise InputValidationError("Thiếu dữ liệu đầu vào — vui lòng kiểm tra:\n" + "\n".join(errors))
+
+
 # -------------------------------------------------------------------- compute
 def compute(order, family, so_mau_in):
     ov = apply_rules(order, family)
@@ -212,7 +302,12 @@ def compute(order, family, so_mau_in):
 
     kho_manh = round(W * 2 + 0.06, 3)
     kho_giay = round(W * 2 + 0.02, 3)
-    kho_mang = float(order.get("kho_mang") or _dims_lookup(order, "mang_in_cm"))
+    km_val = order.get("kho_mang")
+    if km_val is not None:
+        kho_mang = float(km_val)
+    else:
+        dl = _dims_lookup(order, "mang_in_cm")
+        kho_mang = dl if dl else None
     dl_manh = ov.get("dinh_luong_manh_trang_gm2", CONST["dinh_luong_manh_trang_gm2"])
 
     # Per-family conventions (verified against both examples):
@@ -399,6 +494,10 @@ def _per_product_order(order, product):
     po = {k: v for k, v in order.items() if k != "products"}
     po.update(product)
     po.update(parse_spec(product.get("spec", "")))
+    if not po.get("inner_bag_weight_kg"):
+        ibw = _extract_pe_liner_weight(product.get("product_name", ""))
+        if ibw is not None:
+            po["inner_bag_weight_kg"] = ibw
     return po
 
 
@@ -497,6 +596,7 @@ def run(source, colors, outdir=None):
     outputs, summary = [], []
     for product in products:
         porder = _per_product_order(order, product)
+        validate_inputs(porder, family, colors)
         fields = compute(porder, family, colors)
         safe = re.sub(r"[^0-9A-Za-z]+", "-", product.get("product_name") or "order")[:40]
         dm_out = os.path.join(outdir, f"Định mức - {safe} - {order.get('order_id','')}.xlsx")
@@ -539,9 +639,25 @@ def main():
     if args.colors is not None:
         so_mau_in = args.colors
     else:
-        so_mau_in = int(input("Số màu in? (number of print colors — the only unknown): ").strip() or "0")
+        so_mau_in = 0
+        while so_mau_in < 1:
+            raw = input("Số màu in? (number of print colors — the only unknown): ").strip()
+            if raw:
+                try:
+                    so_mau_in = int(raw)
+                except ValueError:
+                    pass
+            if so_mau_in < 1:
+                print("Số màu in phải ≥ 1. Vui lòng nhập lại.", file=sys.stderr)
+    if so_mau_in < 1:
+        print("Số màu in phải ≥ 1.", file=sys.stderr)
+        sys.exit(2)
 
-    res = run(source, so_mau_in, outdir=args.outdir)
+    try:
+        res = run(source, so_mau_in, outdir=args.outdir)
+    except InputValidationError as e:
+        print(e, file=sys.stderr)
+        sys.exit(2)
     print(f"Detected bag family: {res['family']}  (template: {BAG['families'][res['family']]['_aka']})")
     print(f"số màu in = {so_mau_in}\n")
     for p in res["products"]:
