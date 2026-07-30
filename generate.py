@@ -569,6 +569,11 @@ def fill_ycsx(template_path, order, out_path):
     old giao-hàng/notes) is cleared so output never leaks a previous order. The
     shared spec is written into each product row's F cell; where F is the
     top-left of a merge (e.g. F13:H15) that sets the merged display.
+
+    Note: The template has a single merge F13:H15 covering rows 13-15.
+    For multi-product orders, products in rows 14+ cannot have their own
+    spec cell (it's inside the merge). set_value returns False for those
+    cells — the spec is still fully detailed in each product's Định mức file.
     """
     xp = XlsxPatch(template_path)
     cm = CELLMAP["ycsx"]
@@ -593,6 +598,10 @@ def fill_ycsx(template_path, order, out_path):
         xp.set_value(sheet, f"B{r}", i + 1)
         xp.set_value(sheet, f"C{r}", p.get("product_code", ""))
         xp.set_value(sheet, f"D{r}", p.get("product_name", ""))
+        # E{r} (ma_code) and F{r} (spec) may not exist as individual <c>
+        # elements when r > 13 (inside F13:H15 merge). set_value returns
+        # False in that case — harmless because detailed specs live in each
+        # product's Định mức output file.
         xp.set_value(sheet, f"E{r}", p.get("ma_code", ""))
         xp.set_value(sheet, f"F{r}", p.get("spec", ""))
         xp.set_value(sheet, f"I{r}", "Cái")
@@ -602,6 +611,9 @@ def fill_ycsx(template_path, order, out_path):
     # clear stale notes/schedule (K,L) across the whole product region, then
     # clear B-J beyond the products written (leftover products + stage markers
     # at 16-21 + giao-hàng at 23). Merged top-lefts (e.g. B23) clear on contact.
+    # Cells inside a merge range (e.g. F14 inside F13:H15) don't exist as
+    # individual <c> elements — set_value returns False for those, which is
+    # harmless (no stale data can live in a non-existent cell).
     for r in range(13, 24):
         xp.set_value(sheet, f"K{r}", "")
         xp.set_value(sheet, f"L{r}", "")
