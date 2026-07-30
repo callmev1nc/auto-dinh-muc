@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import streamlit as st
-import tempfile, os, sys, traceback, json
+import tempfile, os, sys, traceback, json, glob, importlib
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-
 os.chdir(HERE)
 
+import generate
+
+_watch = [generate.__file__, *glob.glob(os.path.join(HERE, "data", "*.json"))]
+_mtime = max(os.path.getmtime(f) for f in _watch)
+if st.session_state.get("_engine_mtime", 0) < _mtime:
+    importlib.reload(generate)
+    st.session_state["_engine_mtime"] = _mtime
 from generate import run, parse_ycsx
 
 st.set_page_config(page_title="Auto Định Mức — Test Tool", layout="centered")
+with st.sidebar:
+    if st.button("↻ Reload engine"):
+        st.session_state["_engine_mtime"] = 0
+        st.rerun()
 st.title("🧪 Auto Định Mức — Test")
 
 st.markdown(
