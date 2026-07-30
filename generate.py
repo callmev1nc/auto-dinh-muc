@@ -65,22 +65,44 @@ def parse_ycsx(path):
     it. Returns an order dict with header fields, a ``products`` list (one entry
     per product row that carries a qty), and top-level single-product fields set
     to the first product (backward-compat with --order / --sample callers).
+
+    Formula-tolerant: loads the workbook twice — ``data_only=True`` for cached
+    values and ``data_only=False`` for raw formula strings.  When ``cellv``
+    finds a formula that has no cached value (e.g. file saved by a non-Excel
+    tool), it returns ``None`` so the caller can distinguish "empty" from
+    "uncached formula".
     """
     from openpyxl import load_workbook
-    from openpyxl.utils import range_boundaries, coordinate_to_tuple
-    wb = load_workbook(path, data_only=True)
-    ws = wb[wb.sheetnames[0]]
+    from openpyxl.utils import range_boundaries, coordinate_to_tuple, get_column_letter
+    wb_data = load_workbook(path, data_only=True)
+    wb_fml = load_workbook(path, data_only=False)
+    ws = wb_data[wb_data.sheetnames[0]]
+    ws_fml = wb_fml[wb_fml.sheetnames[0]]
+
+    def _is_formula(coord):
+        v = ws_fml[coord].value
+        return isinstance(v, str) and v.startswith("=")
 
     def cellv(coord):
-        """Value at coord, falling back to the top-left of a containing merge."""
+        """Return value or None.  Returns None explicitly when the cell holds a
+        formula that has no cached value (so callers don't mistake it for
+        empty or fall through to a stale merged-cell neighbour)."""
         val = ws[coord].value
         if val is not None:
             return val
+        if _is_formula(coord):
+            return None
         cr, cc = coordinate_to_tuple(coord)
         for mr in ws.merged_cells.ranges:
             min_col, min_row, max_col, max_row = range_boundaries(str(mr))
             if min_row <= cr <= max_row and min_col <= cc <= max_col:
-                return ws.cell(row=min_row, column=min_col).value
+                merged_val = ws.cell(row=min_row, column=min_col).value
+                if merged_val is not None:
+                    return merged_val
+                merged_coord = ws_fml.cell(row=min_row, column=min_col).coordinate
+                if _is_formula(merged_coord):
+                    return None
+                return merged_val
         return None
 
     # header labels live in column B as "N. Label: value"
@@ -102,29 +124,65 @@ def parse_ycsx(path):
         "ngay_yc": bval("1. Ngày yêu cầu"),
     }
 
-    # product rows start at 13: include any row with a numeric qty (col J) and a
-    # code/name. Stage-marker rows (MÀNH/IN/TRÁNG/...) carry no qty -> skipped.
+    # --- locate the product-table header row + columns by header labels --------
+    # Portable across customers: a sale YCSX may start the table on a different
+    # row or put 'Số lượng' in a different column than the 4 Oranges template.
+    # The header row is the first row that has a 'Số lượng' column AND a
+    # 'Mã sản phẩm'/'Tên sản phẩm' column. Merge-aware cellv() still resolves
+    # shared specs (e.g. F13:H15) for every product row beneath the header.
+    QTY_KEYS = ("số lượng", "so luong", "số lương", "qty")
+    CODE_KEYS = ("mã sản phẩm", "ma san pham", "mã sp", "mã hàng")
+    NAME_KEYS = ("tên sản phẩm", "ten san pham", "tên hàng", "mặt hàng")
+    MACODE_KEYS = ("mã code", "ma code", "mtls")
+    SPEC_KEYS = ("chi tiết kỹ thuật", "chi tiet ky thuat", "thông số", "quy cách")
+
+    def _col_with(row, keys):
+        for c in range(1, 24):
+            v = ws.cell(row, c).value
+            if isinstance(v, str) and any(k in v.strip().lower() for k in keys):
+                return get_column_letter(c)
+        return None
+
+    header_row, qty_col = 12, "J"  # historical fallback layout
+    for r in range(1, 32):
+        qc = _col_with(r, QTY_KEYS)
+        if qc and (_col_with(r, CODE_KEYS) or _col_with(r, NAME_KEYS)):
+            header_row, qty_col = r, qc
+            break
+    code_col = _col_with(header_row, CODE_KEYS) or "C"
+    name_col = _col_with(header_row, NAME_KEYS) or "D"
+    ma_col = _col_with(header_row, MACODE_KEYS) or "E"
+    spec_col = _col_with(header_row, SPEC_KEYS) or "F"
+
+    # product rows: any row under the header with a numeric qty + a code/name.
+    # Stage-marker rows (MÀNH/IN/TRÁNG/...) carry no qty -> skipped.
     products = []
-    for r in range(13, 41):
-        code, name = cellv(f"C{r}"), cellv(f"D{r}")
-        qty = _parse_qty(cellv(f"J{r}"))
-        if qty is None or not (code or name):
+    for r in range(header_row + 1, header_row + 41):
+        code, name = cellv(f"{code_col}{r}"), cellv(f"{name_col}{r}")
+        qty = _parse_qty(cellv(f"{qty_col}{r}"))
+        if qty is None or qty <= 0 or not (code or name):
             continue
         products.append({
             "product_code": str(code).strip() if code else "",
             "product_name": str(name).strip() if name else "",
-            "ma_code": str(cellv(f"E{r}") or "").strip(),
+            "ma_code": str(cellv(f"{ma_col}{r}") or "").strip(),
             "qty": qty,
-            "spec": str(cellv(f"F{r}") or "").strip().strip('"'),
+            "spec": str(cellv(f"{spec_col}{r}") or "").strip().strip('"'),
         })
-    if not products:  # legacy fallback: take row 13 verbatim
-        products = [{
-            "product_code": str(cellv("C13") or "").strip(),
-            "product_name": str(cellv("D13") or "").strip(),
-            "ma_code": str(cellv("E13") or "").strip(),
-            "qty": _parse_qty(cellv("J13")) or 0,
-            "spec": str(cellv("F13") or "").strip().strip('"'),
-        }]
+
+    if not products:
+        # surface exactly what the số lượng column contained so the cause is
+        # obvious (wrong column, blank SL, or SL stored as an uncached formula).
+        seen = [f"{qty_col}{r}={cellv(f'{qty_col}{r}')!r}"
+                for r in range(header_row + 1, header_row + 16)
+                if cellv(f"{qty_col}{r}") not in (None, "")]
+        raise InputValidationError(
+            f"Không đọc được dòng sản phẩm nào từ phiếu YCSX (header dòng "
+            f"{header_row}, cột số lượng = {qty_col}). Ô {qty_col} thấy: "
+            f"{', '.join(seen) or '(rỗng)'}. → Kiểm tra cột 'Số lượng' trong "
+            f"phiếu YCSX có điền số > 0 cho từng mặt hàng; nếu SL là công thức "
+            f"Excel, hãy copy → paste-as-value trước khi upload."
+        )
     order["products"] = products
 
     # top-level single-product fields = first product (backward compat)
@@ -272,7 +330,10 @@ class InputValidationError(ValueError):
 def validate_inputs(order, family, so_mau_in):
     errors = []
     if float(order.get("qty") or 0) <= 0:
-        errors.append("- SL (cột J13, J14… trong phiếu YCSX) phải > 0")
+        errors.append(
+            "- SL (cột 'Số lượng' trong phiếu YCSX) phải > 0. Nếu cột này là "
+            "công thức Excel, hãy copy → Paste Values trước khi upload."
+        )
     if float(order.get("bag_length_m") or 0) <= 0:
         errors.append("- Kích thước dài (bag_length_m) không hợp lệ — kiểm tra dòng 'Kích thước' trong spec")
     if float(order.get("width_plus_gusset_m") or 0) <= 0:
