@@ -1,2 +1,5 @@
+fastapi>=0.100
+uvicorn[standard]>=0.22
+python-multipart>=0.0.6
 streamlit>=1.28
 openpyxl>=3.1
