@@ -304,7 +304,7 @@ def detect_family(order):
     if mw:
         w = int(mw.group(1))
         return "opp" if w >= 35 else "paper_kp"
-    raise ValueError("Cannot detect bag family from order. Set order['bag_family'] manually.")
+    raise InputValidationError("Cannot detect bag family from order. Set order['bag_family'] manually.")
 
 
 # ----------------------------------------------------------- customer overrides

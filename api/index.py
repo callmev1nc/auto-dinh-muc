@@ -1,4 +1,4 @@
-import os, sys, json, tempfile, traceback
+import os, sys, json, tempfile, traceback, shutil
 from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -9,7 +9,7 @@ import generate
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
-import uvicorn
+from starlette.background import BackgroundTask
 
 app = FastAPI(title="Auto Định Mức")
 
@@ -99,24 +99,25 @@ async def generate_endpoint(
     if suffix not in (".json", ".xlsx"):
         raise HTTPException(400, f"Unsupported file type: {suffix}")
 
+    tmp = tempfile.mkdtemp()
     try:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = os.path.join(tmp, file.filename)
-            with open(tmp_path, "wb") as f:
-                f.write(await file.read())
+        tmp_path = os.path.join(tmp, file.filename)
+        with open(tmp_path, "wb") as f:
+            f.write(await file.read())
 
-            source = ("ycsx", tmp_path) if suffix == ".xlsx" else ("order", tmp_path)
-            res = generate.run(source, colors, outdir=os.path.join(tmp, "out"))
+        source = ("ycsx", tmp_path) if suffix == ".xlsx" else ("order", tmp_path)
+        res = generate.run(source, colors, outdir=os.path.join(tmp, "out"))
 
-            zip_path = res["outputs"][0]
-            zip_name = os.path.basename(zip_path)
+        zip_path = res["outputs"][0]
+        zip_name = os.path.basename(zip_path)
 
-            return FileResponse(
-                zip_path,
-                media_type="application/zip",
-                filename=zip_name,
-            )
+        return FileResponse(
+            zip_path, media_type="application/zip", filename=zip_name,
+            background=BackgroundTask(shutil.rmtree, tmp),
+        )
     except generate.InputValidationError as e:
+        shutil.rmtree(tmp, ignore_errors=True)
         raise HTTPException(400, str(e))
     except Exception as e:
+        shutil.rmtree(tmp, ignore_errors=True)
         raise HTTPException(500, traceback.format_exc())
