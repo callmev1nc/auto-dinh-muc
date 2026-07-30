@@ -10,8 +10,21 @@ import generate
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
 from starlette.background import BackgroundTask
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+
+FUNCTION_PATH = "/api/index.py"
+
+class _VercelPathMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.scope.get("path", "")
+        if path.startswith(FUNCTION_PATH):
+            remainder = path[len(FUNCTION_PATH):]
+            request.scope["path"] = remainder or "/"
+        return await call_next(request)
 
 app = FastAPI(title="Auto Định Mức")
+app.add_middleware(_VercelPathMiddleware)
 
 HTML_FORM = """
 <!DOCTYPE html>
