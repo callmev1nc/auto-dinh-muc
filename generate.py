@@ -206,7 +206,7 @@ def parse_spec(spec):
         return out
     s = spec.lower()
     # dimensions like "(42+8) cm x 82cm" (optional parens) or "50x92 cm"
-    m = re.search(r"\(?\s*(\d+)\s*\+\s*(\d+)\s*\)?\s*cm\s*x\s*(\d+(?:\.\d+)?)\s*cm", spec)
+    m = re.search(r"\(?\s*(\d+)\s*\+\s*(\d+)\s*\)?\s*(?:cm\s*)?x\s*(\d+(?:\.\d+)?)\s*cm", spec)
     if m:
         out["width_cm"] = int(m.group(1)); out["gusset_cm"] = int(m.group(2))
         out["width_plus_gusset_m"] = (int(m.group(1)) + int(m.group(2))) / 100

@@ -363,7 +363,7 @@ class TestInputParsing:
             validate_inputs(order, "paper_kp", 2)
             assert False, "expected InputValidationError"
         except InputValidationError as e:
-            assert "J13" in str(e)
+            assert "Số lượng" in str(e)
 
     def test_validate_inputs_raises_on_zero_colors(self):
         from generate import validate_inputs, InputValidationError
