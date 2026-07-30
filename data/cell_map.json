@@ -25,7 +25,7 @@
         "28": {"B": 10, "C": "Mực OPP tái chế", "D": "MOPPHH0000001", "F": "Kg"}
       },
       "materials_paper_kp": {
-        "18": {"C": "Giấy Kraft {color} Nhật K{code} ĐL70", "D": "giay_kraft_code", "F": "Kg", "G": "giay_kraft_kg", "A": "Tổ in", "B": 1},
+        "18": {"C": "kraft_name", "D": "giay_kraft_code", "F": "Kg", "G": "giay_kraft_kg", "A": "Tổ in", "B": 1},
         "19": {"F": "Mét", "G": "sl_in_thuc_te_m"},
         "20_up": {"_comment": "flexo ink color rows, count = so_mau_in; from ink_master.flexo. Then 'Mực FLEXO tái chế' line."}
       }

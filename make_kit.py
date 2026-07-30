@@ -25,7 +25,7 @@ INCLUDE_DIRS = {
 }
 
 EXCLUDE_SUFFIXES = (".bak",)
-EXCLUDE_DIRS = {"output", "__pycache__", ".git", "__MACOSX"}
+EXCLUDE_DIRS = {"output", "__pycache__", ".git", "__MACOSX", "tests"}
 EXCLUDE_FILES = {"colour_25kg.py", "tao_don.py", "don_hang.bat", "make_kit.py",
                  "dinh_muc_kit.zip", "README.md", "README_setup.md", "PROJECT_INSTRUCTIONS.md"}
 

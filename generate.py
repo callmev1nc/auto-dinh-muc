@@ -256,6 +256,10 @@ def compute(order, family, so_mau_in):
         gk = sl_in * kho_giay * (CONST["dinh_luong_giay_kraft_gm2"] / 1000)
         fields["giay_kraft_kg"] = round(gk, 4)
         fields["giay_kraft_code"] = order.get("giay_kraft_code", "GN07010200001")
+        fields["kraft_name"] = order.get("kraft_name") or (
+            f"Giấy Kraft {order.get('kraft_color', 'vàng')} Nhật "
+            f"K{order.get('kraft_grade', '1020')} ĐL{int(CONST['dinh_luong_giay_kraft_gm2'])}"
+        )
 
     # ---- Dán (glue) — written into Dán 2 rows 18-20
     coeff = ov.get("dan_keo_coeff", CONST["dan"]["keo_coeff_opp"] if family == "opp" else CONST["dan"]["keo_coeff_kp"])
@@ -342,8 +346,6 @@ def fill_dinh_muc(template_path, family, fields, so_mau_in, out_path):
             for col, val in spec.items():
                 if val in fields:
                     _set(xp, "In", f"{col}{row}", fields[val])
-                elif "{" in str(val):
-                    pass  # placeholder name, leave template
                 else:
                     _set(xp, "In", f"{col}{row}", val)
         inks = INK["flexo"]
