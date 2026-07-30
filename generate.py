@@ -516,6 +516,14 @@ def fill_dinh_muc(template_path, family, fields, so_mau_in, out_path):
             else:
                 xp.set_value("In", f"C{r}", ""); xp.set_value("In", f"D{r}", "")
 
+    # --- Stage material sheets: header + info table ---
+    for sheet in ("Tráng", "Dán", "Thổi", "May"):
+        if sheet not in xp.sheet_paths:
+            continue
+        for region in ("header", "info_table_M"):
+            for ref, field in cm.get(sheet, {}).get(region, {}).items():
+                _set(xp, sheet, ref, fields.get(field))
+
     # --- Stage sheets: headers + stage values ---
     for sheet in ("May 1", "Chia biên 2", "Dán 2"):
         if sheet not in xp.sheet_paths:
