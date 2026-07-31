@@ -16,10 +16,12 @@ OUT = os.path.join(HERE, "dinh_muc_kit.zip")
 INCLUDE = [
     "generate.py",
     "xlsxpatch.py",
+    "nvl_lookup.py",
+    "tsvh_lookup.py",
 ]
 
 INCLUDE_DIRS = {
-    "data": [".json"],
+    "data": [".json", ".xlsx"],
     "templates": [".xlsx"],
     "samples": [".json"],
 }

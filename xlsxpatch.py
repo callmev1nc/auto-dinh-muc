@@ -238,6 +238,78 @@ class XlsxPatch:
         fg = pf.find(NS + "fgColor")
         return fg.get("rgb") if fg is not None else None
 
+    def set_sheet_state(self, sheet: str, state: str):
+        """Hide/show a sheet by toggling the ``state`` attribute in xl/workbook.xml.
+        Byte-surgical regex splice (like set_value). Returns True on success."""
+        if state not in ("visible", "hidden", "veryHidden"):
+            return False
+        key = "xl/workbook.xml"
+        xml = self._data[key].decode("utf-8")
+        pattern = re.compile(r'(<sheet\s+name="%s"[^>]*?)/>' % re.escape(sheet))
+
+        def _repl(m):
+            head = m.group(1)
+            if re.search(r'\bstate="[^"]*"', head):
+                head = re.sub(r'\bstate="[^"]*"', 'state="%s"' % state, head)
+            else:
+                head = head.rstrip() + ' state="%s"' % state
+            return head + "/>"
+
+        new_xml, n = pattern.subn(_repl, xml, count=1)
+        if n == 0:
+            return False
+        self._data[key] = new_xml.encode("utf-8")
+        return True
+
+    def clear_sheet_images(self, sheet: str):
+        """Strip every picture anchor from a sheet's drawing part, byte-surgically.
+        Used for the 'X' sheet when the order is 'không in' (no print sample art).
+        The drawing relationship + media stay in the package (harmless orphans),
+        which keeps the edit minimal and avoids touching the drawing rels."""
+        key = self.sheet_paths.get(sheet)
+        if not key:
+            return False
+        sheet_xml = self._data[key].decode("utf-8")
+        m = re.search(r'<drawing\s+r:id="([^"]+)"', sheet_xml)
+        if not m:
+            return False
+        rid = m.group(1)
+        rel_key = key.rsplit("/", 1)[0] + "/_rels/" + key.rsplit("/", 1)[1] + ".rels"
+        rel_xml = self._data.get(rel_key)
+        if rel_xml is None:
+            return False
+        target = None
+        for r in re.finditer(r'<Relationship\s+([^>]*)/>', rel_xml.decode("utf-8")):
+            attrs = dict(re.findall(r'(\w+)="([^"]*)"', r.group(1)))
+            if attrs.get("Id") == rid:
+                target = attrs.get("Target", "")
+                break
+        if not target:
+            return False
+        if not target.startswith("/"):
+            parts = key.split("/")[:-1]
+            for tok in target.split("/"):
+                if tok == "..":
+                    if parts:
+                        parts.pop()
+                elif tok in (".", ""):
+                    continue
+                else:
+                    parts.append(tok)
+            draw_key = "/".join(parts)
+        else:
+            draw_key = target.lstrip("/")
+        draw_xml = self._data.get(draw_key)
+        if draw_xml is None:
+            return False
+        text = draw_xml.decode("utf-8")
+        cleaned = re.sub(r"<xdr:(?:one|two)CellAnchor[^>]*>.*?</xdr:(?:one|two)CellAnchor>",
+                         "", text, flags=re.S)
+        if cleaned == text:
+            return False
+        self._data[draw_key] = cleaned.encode("utf-8")
+        return True
+
     # ---------- serialization ----------
     def _to_xml(self, root: ET.Element) -> bytes:
         """Serialize `root`, then strip markup-compatibility ghosts.

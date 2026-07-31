@@ -31,6 +31,26 @@
       }
     },
 
+    "Tráng": {
+      "_comment": "PHIẾU YÊU CẦU XUẤT KHO NVL — stage: Tráng. M6:M9 are template formulas (=In!M6 etc.), only M10:M13 written.",
+      "header": {"C5": "customer", "C6": "product_name", "C7": "product_code", "C8": "order_id", "C9": "so_phieu_sx"},
+      "info_table_M": {"M10": "kho_manh", "M11": "kho_mang", "M12": "kho_giay", "M13": "inner_bag_weight_kg"}
+    },
+    "Dán": {
+      "_comment": "PHIẾU YÊU CẦU XUẤT KHO NVL — stage: Dán. M6:M9 are template formulas (=In!M6 etc.), only M10:M13 written.",
+      "header": {"C5": "customer", "C6": "product_name", "C7": "product_code", "C8": "order_id", "C9": "so_phieu_sx"},
+      "info_table_M": {"M10": "kho_manh", "M11": "kho_mang", "M12": "kho_giay", "M13": "inner_bag_weight_kg"}
+    },
+    "Thổi": {
+      "_comment": "PHIẾU YÊU CẦU XUẤT KHO NVL — stage: Thổi. M6:M9 are template formulas (=In!M6 etc.), only M10:M13 written.",
+      "header": {"C5": "customer", "C6": "product_name", "C7": "product_code", "C8": "order_id", "C9": "so_phieu_sx"},
+      "info_table_M": {"M10": "kho_manh", "M11": "kho_mang", "M12": "kho_giay", "M13": "inner_bag_weight_kg"}
+    },
+    "May": {
+      "_comment": "PHIẾU YÊU CẦU XUẤT KHO NVL — stage: May / lồng túi. M6:M9 are template formulas (=In!M6 etc.), only M10:M13 written.",
+      "header": {"C5": "customer", "C6": "product_name", "C7": "product_code", "C8": "order_id", "C9": "so_phieu_sx"},
+      "info_table_M": {"M10": "kho_manh", "M11": "kho_mang", "M12": "kho_giay", "M13": "inner_bag_weight_kg"}
+    },
     "May 1": {
       "_comment": "LỆNH SẢN XUẤT — stage: May / lồng túi.",
       "header": {"C5": "order_id", "C6": "product_code", "C7": "product_name", "C8": "customer"},

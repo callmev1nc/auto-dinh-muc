@@ -19,6 +19,8 @@ USAGE:
 from __future__ import annotations
 import argparse, json, os, sys, datetime, re, copy, zipfile
 from xlsxpatch import XlsxPatch
+import nvl_lookup as nvl
+import tsvh_lookup as tsvh
 
 try:  # Windows console defaults to cp1252; force utf-8 so Vietnamese prints survive
     sys.stdout.reconfigure(encoding="utf-8")
@@ -33,6 +35,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
 TEMPLATES = os.path.join(HERE, "templates")
 OUTDIR = os.path.join(HERE, "output")
+NVL_PATH = os.path.join(DATA, "Nguyên vật liệu.xlsx")
 
 
 def template_path(key):
@@ -204,7 +207,6 @@ def parse_spec(spec):
     out = {}
     if not spec:
         return out
-    s = spec.lower()
     # dimensions like "(42+8) cm x 82cm" (optional parens) or "50x92 cm"
     m = re.search(r"\(?\s*(\d+)\s*\+\s*(\d+)\s*\)?\s*(?:cm\s*)?x\s*(\d+(?:\.\d+)?)\s*cm", spec)
     if m:
@@ -219,7 +221,64 @@ def parse_spec(spec):
     ibw = _extract_pe_liner_weight(spec)
     if ibw is not None:
         out["inner_bag_weight_kg"] = ibw
+    tl = _parse_tui_long(spec)
+    if tl:
+        out.update(tl)
     return out
+
+
+def _parse_tui_long(spec):
+    """Parse Quy cách lồng túi PE → {tui_long_loai, tui_long_rong_cm, tui_long_dai_cm,
+    tui_long_kg, tui_long_quy_cach_day}. Returns {} when the spec has no liner info."""
+    if not spec or not any(k in spec.lower() for k in _LINER_KW):
+        return {}
+    out = {}
+    loai = "thường"
+    m_loai = re.search(r"(?:túi (?:lồng )?pe|pe)\s*(rin|thường)", spec, re.IGNORECASE)
+    if m_loai:
+        loai = m_loai.group(1).strip().lower()
+    out["tui_long_loai"] = "rin" if loai == "rin" else "thường"
+    m_dim = re.search(r"(\d+)\s*x\s*(\d+)\s*cm", spec)
+    if m_dim:
+        out["tui_long_rong_cm"] = int(m_dim.group(1))
+        out["tui_long_dai_cm"] = int(m_dim.group(2))
+    m_qc = re.search(r"\((LTMS|MTLS)\)", spec, re.IGNORECASE)
+    if m_qc:
+        out["tui_long_quy_cach_day"] = m_qc.group(1).upper()
+    else:
+        m_qc = re.search(r"(LTMS|MTLS)", spec, re.IGNORECASE)
+        if m_qc:
+            out["tui_long_quy_cach_day"] = m_qc.group(1).upper()
+    return out
+
+
+def _detect_has_print(order):
+    """A bag is printed unless the order/spec/product name says 'không in'."""
+    if order.get("has_print") is not None:
+        return bool(order.get("has_print"))
+    text = (" ".join([
+        str(order.get("spec", "")), str(order.get("product_name", "")),
+    ])).lower()
+    return not any(k in text for k in ("không in", "khong in", "không in ấn", "khong in an", "không in hình"))
+
+
+def _has_tui_long(order):
+    if order.get("has_tui_long") is not None:
+        return bool(order.get("has_tui_long"))
+    if float(order.get("inner_bag_weight_kg") or 0) > 0:
+        return True
+    text = (" ".join([str(order.get("spec", "")), str(order.get("product_name", ""))])).lower()
+    return any(k in text for k in _LINER_KW)
+
+
+def _gusset_m(order, W):
+    """Gusset (hông) in metres. Prefer explicit width_cm/gusset_cm; else derive from
+    width_plus_gusset minus a separately-given width."""
+    if order.get("gusset_cm"):
+        return float(order["gusset_cm"]) / 100
+    if order.get("width_cm") and order.get("width_plus_gusset_m"):
+        return float(order["width_plus_gusset_m"]) - float(order["width_cm"]) / 100
+    return 0.0
 
 
 def _to_num(v):
@@ -338,13 +397,14 @@ def validate_inputs(order, family, so_mau_in):
         errors.append("- Kích thước dài (bag_length_m) không hợp lệ — kiểm tra dòng 'Kích thước' trong spec")
     if float(order.get("width_plus_gusset_m") or 0) <= 0:
         errors.append("- Kích thước ngang (width_plus_gusset_m) không hợp lệ — kiểm tra dòng 'Kích thước' trong spec")
-    if so_mau_in < 1:
+    has_print = _detect_has_print(order)
+    if has_print and so_mau_in < 1:
         errors.append("- Số màu in (so_mau_in) phải ≥ 1 — nhập số màu thực tế")
     text = (str(order.get("spec", "")) + " " + str(order.get("product_name", ""))).lower()
     has_liner = any(k in text for k in _LINER_KW)
     if has_liner and float(order.get("inner_bag_weight_kg") or 0) <= 0:
         errors.append("- inner_bag_weight_kg (Quy cách lồng túi PE) không hợp lệ — kiểm tra dòng 'Quy cách lồng túi PE' trong spec")
-    if family == "opp":
+    if family == "opp" and has_print:
         km = order.get("kho_mang") or _dims_lookup(order, "mang_in_cm")
         if not km:
             errors.append("- Khổ màng (kho_mang) phải xác định và > 0 đối với bao OPP — kiểm tra kích thước trong spec")
@@ -358,33 +418,263 @@ def compute(order, family, so_mau_in):
     qty = float(order.get("qty") or 0)
     L = float(order.get("bag_length_m") or 0)
     W = float(order.get("width_plus_gusset_m") or 0)
+    tol = float(order.get("tolerance", CONST["dung_sai_default"]))
+    bao_type = "BOPP" if family == "opp" else "KP"
+    warnings = []
+    items = nvl.load_nvl_list(NVL_PATH) if os.path.isfile(NVL_PATH) else []
+
+    has_print = _detect_has_print(order)
+    has_tui_long = _has_tui_long(order)
     ibw = float(order.get("inner_bag_weight_kg") or 0)
-    dung_sai = float(order.get("tolerance", CONST["dung_sai_default"]))
+    if not has_tui_long:
+        ibw = 0.0
+
+    gusset_m = _gusset_m(order, W)
+    width_m = max(W - gusset_m, 0.0)
 
     kho_manh = round(W * 2 + 0.06, 3)
+    kho_mang = round(W * 2 + 0.04, 3)
     kho_giay = round(W * 2 + 0.02, 3)
-    km_val = order.get("kho_mang")
-    if km_val is not None:
-        kho_mang = float(km_val)
-    else:
-        dl = _dims_lookup(order, "mang_in_cm")
-        kho_mang = dl if dl else None
-    dl_manh = ov.get("dinh_luong_manh_trang_gm2", CONST["dinh_luong_manh_trang_gm2"])
+    kho_thanh_pham = round(W * 2 + 0.04, 3)
 
-    # Per-family conventions (verified against both examples):
-    #   OPP   : sl_in = qty*L*(1+dung_sai) + phế chồng màu ; thành phẩm = qty
-    #   paper : sl_in = qty*L (no tolerance on metres)      ; thành phẩm = qty*(1+dung_sai)
-    if family == "opp":
-        phe = CONST["phe_chong_mau_m"].get(str(so_mau_in), 0)
-        sl_in_default = qty * L * (1 + dung_sai) + phe
-        thanh_default = int(round(qty))
+    # ---- Số lượng in thực tế (In!M9) & downstream Tráng!M9 & thành phẩm (G29)
+    # Confirmed rule: BOPP applies tolerance on metres; KP does NOT (tolerance
+    # only on thành phẩm). Phế chồng màu is a BOPP-with-print-only addition.
+    phe = 0
+    if has_print and bao_type == "BOPP":
+        phe = CONST["phe_chong_mau_m"].get(str(so_mau_in), 500)
+    if bao_type == "BOPP":
+        sl_in = qty * L * (1 + tol) + phe
+        trang_sl = qty * L * (1 + tol)
     else:
-        sl_in_default = qty * L
-        thanh_default = int(round(qty * (1 + dung_sai)))
-    sl_in = order.get("sl_in_thuc_te_m")
-    if sl_in in (None, ""):
-        sl_in = sl_in_default
+        sl_in = qty * L
+        trang_sl = qty * L
     sl_in = round(float(sl_in), 1)
+    trang_sl = round(float(trang_sl), 4)
+    thanh_pham = int(round(qty)) if bao_type == "BOPP" else int(round(qty * (1 + tol)))
+
+    # ---- NVL lookups (name/code), never guess
+    def _exact(keywords):
+        if not items:
+            return None
+        found = nvl.find_exact_name(items, keywords)
+        return found[0] if found else None
+
+    manh_dl = int(ov.get("dinh_luong_manh_trang_gm2", CONST["dinh_luong_manh_trang_gm2"]))
+    kho_manh_mm = int(round(kho_manh * 1000))
+    manh, manh_cands = (None, [])
+    if items:
+        manh, manh_cands = nvl.find_manh_trang(items, kho_manh_mm, manh_dl)
+    if not manh:
+        warnings.append(f"Không tìm thấy Mành trắng K{kho_manh_mm} ĐL{manh_dl} trong "
+                        f"Nguyên vật liệu.xlsx. Ứng viên gần đúng: {manh_cands}. Cần hỏi lại.")
+    f801c = _exact(["Hạt nhựa nguyên sinh F801C"])
+    taical = _exact(["Hạt phụ gia EFPP 105BC"])
+    vistamaxx = _exact(["Hạt nhựa Vistamax 6202"])
+
+    mang = giay = None
+    loai_mang = order.get("mang_opp_loai", "mờ")
+    dl_mang = 0.01638 if str(loai_mang).strip() == "bóng" else 0.01584
+    if bao_type == "BOPP":
+        if items:
+            mang, mang_cands = nvl.find_mang_opp(items, loai_mang, int(round(kho_mang * 1000)))
+        if not mang:
+            warnings.append(f"Không tìm thấy Màng BOPP {loai_mang} khổ {int(round(kho_mang * 1000))}mm "
+                            f"trong Nguyên vật liệu.xlsx. Ứng viên gần đúng: "
+                            f"{mang_cands if items else '(chưa có file NVL)'}. Cần hỏi lại.")
+    else:
+        if items:
+            giay, giay_cands = nvl.find_giay_kraft(
+                items, order.get("giay_kraft_mau", "vàng"),
+                order.get("giay_kraft_xuatxu", "Nhật"),
+                int(round(kho_giay * 1000)), 70,
+                hang_uu_tien=order.get("giay_kraft_hang", "TAIKO"))
+        if not giay:
+            warnings.append(f"Không tìm thấy Giấy Kraft khổ {int(round(kho_giay * 1000))}mm trong "
+                            f"Nguyên vật liệu.xlsx. Ứng viên gần đúng: "
+                            f"{giay_cands if items else '(chưa có file NVL)'}. Cần hỏi lại.")
+
+    # ---- In sheet materials
+    mang_bopp_kg = round(sl_in * kho_mang * dl_mang, 4) if bao_type == "BOPP" else 0.0
+    dung_moai_opp_kg = round(CONST["in_opp"]["dung_moai_opp_coeff"] * sl_in
+                             * CONST["in_opp"]["dung_moai_opp_share"], 4)
+    dung_moai_ea_kg = round(CONST["in_opp"]["dung_moai_opp_coeff"] * sl_in
+                            * CONST["in_opp"]["dung_moai_ea_share"], 4)
+    giay_kraft_kg = round(trang_sl * kho_giay * (CONST["dinh_luong_giay_kraft_gm2"] / 1000), 4)
+
+    # ---- Tráng stage
+    trang_g17 = round(trang_sl * kho_manh * (manh_dl / 1000), 4)
+    t = CONST["trang"]
+    if bao_type == "BOPP":
+        trang_g18 = round(trang_sl * kho_manh * t["f801c_dinh_luong"] * t["f801c_share_opp"], 4)
+        trang_g19 = round(trang_sl * kho_manh * t["taical_dinh_luong"] * t["taical_share_opp"], 4)
+        trang_g20 = round(trang_sl * kho_manh * t["hat_mau_dinh_luong"] * t["hat_mau_share_opp"], 4)
+    else:
+        trang_g18 = round(trang_sl * kho_manh * t["f801c_dinh_luong"] * t["f801c_share_kp"], 4)
+        trang_g19 = round(trang_sl * kho_manh * t["taical_dinh_luong"] * t["taical_share_kp"], 4)
+        trang_g20 = None
+
+    # ---- Dán stage (glue) — uses Tráng!M9 as the base quantity
+    d = CONST["dan"]
+    keo_const = d["keo_coeff_opp"] if bao_type == "BOPP" else d["keo_coeff_kp"]
+    dan_m9 = trang_sl
+    if ov.get("glue") == "9415_60_vistamax_40":
+        glue9415 = _exact(["Hạt nhựa PP FC9415"])
+        dan_c17 = glue9415["ten"] if glue9415 else "Hạt nhựa PP FC9415"
+        dan_d17 = glue9415["ma"] if glue9415 else "NHPPFC9415G01"
+        share_a, share_b = d["special_9415_share"], d["special_vistamax_share"]
+    else:
+        dan_c17 = f801c["ten"] if f801c else "Hạt nhựa nguyên sinh F801C"
+        dan_d17 = f801c["ma"] if f801c else "NHPPNSF801C001"
+        share_a, share_b = d["f801c_vistamax_share_each"], d["f801c_vistamax_share_each"]
+    dan_g17 = round(dan_m9 * share_a * keo_const / 1000, 4)
+    dan_g18 = round(dan_m9 * share_b * keo_const / 1000, 4)
+    dan_c18 = vistamaxx["ten"] if vistamaxx else "Vistamaxx"
+    glue_total_kg = round(dan_g17 + dan_g18, 4)
+
+    # ---- May stage
+    chi_may_kg = round(0.6 * qty / 1000, 4)
+    day_bo_bao = _exact(["Dây bó bao"])
+    day_bo_bao_ten = day_bo_bao["ten"] if day_bo_bao else "Dây bó bao"
+    day_bo_bao_kg = round(qty / 5000, 4)
+
+    # ---- Thổi stage (only when the order carries a PE liner bag)
+    tui_ldpe_ten = None
+    tui_g17 = tui_g18 = None
+    tui_ten = tui_ma = None
+    quy_cach_day = order.get("tui_long_quy_cach_day") if has_tui_long else None
+    day_loai = nvl.quy_cach_day_to_ten(quy_cach_day) if quy_cach_day else None
+    if has_tui_long:
+        ldpe = _exact(["Hạt nhựa LLDPE", "FD21HN"])
+        tui_ldpe_ten = ldpe["ten"] if ldpe else "LDPE"
+        if str(order.get("tui_long_loai", "thường")).lower() == "rin":
+            tui_g17 = round(qty * ibw * (1 + tol), 4)
+            tui_g18 = round(qty * ibw * (1 + tol) * 0.107 * 0, 4)
+        else:
+            tui_g17 = round(qty * ibw * (1 + tol) * 0.893, 4)
+            tui_g18 = round(qty * ibw * (1 + tol) * 0.107, 4)
+        rong_cm = order.get("tui_long_rong_cm")
+        dai_cm = order.get("tui_long_dai_cm")
+        if order.get("tui_long_ma"):
+            tui_ten, tui_ma = order.get("tui_long_ten"), order.get("tui_long_ma")
+        elif items and rong_cm and dai_cm:
+            tui, tui_cands = nvl.find_tui_long(
+                items, order.get("tui_long_loai", "thường"), int(rong_cm), int(dai_cm),
+                int(round(ibw * 1000)), day_loai=day_loai)
+            if tui:
+                tui_ten, tui_ma = tui["ten"], tui["ma"]
+                if not day_loai:
+                    warnings.append(f"Túi PE: tra được 1 ứng viên ({tui['ten']}, mã {tui['ma']}) "
+                                    f"nhưng YCSX không nêu rõ LTMS/MTLS — cần Nhàn xác nhận.")
+            else:
+                qc_txt = f", đáy {day_loai}" if day_loai else (f" ({quy_cach_day})" if quy_cach_day else "")
+                tui_ten = (f"Túi PE {order.get('tui_long_loai', 'thường')} "
+                           f"{int(rong_cm)}x{int(dai_cm)}cm {int(round(ibw * 1000))}gr{qc_txt}")
+                tui_ma = None
+                warnings.append(f"Chưa xác định được mã Túi PE khớp (rộng/dài/khối lượng/đáy) trong "
+                                f"Nguyên vật liệu.xlsx — điền tên theo YCSX ({tui_ten}), để trống Mã, "
+                                f"cần Nhàn tra. Ứng viên gần đúng: {tui_cands}.")
+        elif not items:
+            tui_ten, tui_ma = None, None
+        else:
+            tui_ten, tui_ma = None, None
+            warnings.append("YCSX không nêu rõ kích thước túi lồng (rộng/dài) nên chưa tra được Mã "
+                            "Túi PE trong Nguyên vật liệu.xlsx — để trống, cần Nhàn bổ sung.")
+    elif bao_type == "BOPP":
+        pass  # không lồng túi → ẩn sheet Thổi
+
+    # ---- Nẹp rows (May sheet 21/22)
+    nep_rows = []
+    for nep in order.get("nep", []):
+        loai = str(nep.get("loai", "")).upper()
+        rong_cm = float(nep.get("rong_cm", 6))
+        rong_m = rong_cm / 100
+        if loai == "KP":
+            dinh_luong = CONST["may"]["nep_kp_dinh_luong"]
+            nep_item = _exact([f"Nẹp KP {nep.get('mau_xuatxu','')}".strip(), f"{int(rong_cm)}cm"])
+            name = nep_item["ten"] if nep_item else f"Nẹp KP {nep.get('mau_xuatxu','')} {int(rong_cm)}cm"
+            code = nep_item["ma"] if nep_item else None
+        elif loai == "GIAY":
+            dinh_luong = 0.07
+            nep_item = _exact(["Nẹp giấy", f"{int(rong_cm)}cm"])
+            name = nep_item["ten"] if nep_item else f"Nẹp giấy {int(rong_cm)}cm"
+            code = nep_item["ma"] if nep_item else None
+        else:  # OPP
+            dinh_luong = CONST["may"]["nep_opp_dinh_luong"]
+            name, code = f"Nẹp OPP {int(rong_cm)}cm — xác nhận tên/mã", None
+        kg = round(rong_m * qty * (W + 0.12) * dinh_luong, 4)
+        nep_rows.append({"loai": loai, "name": name, "code": code, "kg": kg})
+    if not order.get("nep"):
+        warnings.append("Đơn không dùng nẹp — sẽ để 0/xóa các ô nẹp ở sheet May.")
+
+    # ---- Tráng 2 (Nhật ký SX)
+    trang2 = {
+        "kho_tp_mm": int(round(kho_thanh_pham * 1000)),
+        "dl_tp": "160 ± 3" if bao_type == "KP" else "110 ± 3",
+        "toc_do_may": tsvh.TRANG_TOC_DO_MAY_CO_DINH,
+        "dun_keo": tsvh.trang_tra_toc_do_dun_keo(kho_manh_mm),
+        "khuon": tsvh.trang_chieu_rong_khuon_xa_keo(kho_manh_mm),
+    }
+    if not trang2["dun_keo"]:
+        warnings.append(f"Không tra được 'Tốc độ đùn keo' cho khổ mành {kho_manh_mm}mm — để trống.")
+
+    # ---- Dán 2 (Nhật ký SX)
+    length_mm = int(round(L * 1000))
+    ngang_mm = int(round(width_m * 1000))
+    hong_mm = int(round(gusset_m * 1000))
+    dan2_params, tsvh_source = tsvh.dan_cat_tra_thong_so(
+        order.get("customer", ""), bao_type, length_mm, ngang_mm, hong_mm)
+    if tsvh_source == "chung":
+        warnings.append("Dán 2: không có mục TSVH riêng cho khách hàng này — dùng bảng TSVH chung (TSDCA1).")
+    missing = [k for k, v in dan2_params.items() if v is None]
+    if missing:
+        warnings.append(f"Dán 2: các trường {missing} không tra được TSVH — để trống, tô vàng, cần hỏi lại.")
+    dan2 = {
+        "len_mm": length_mm,
+        "d45": f"{length_mm} ± 5",
+        "d46": f"{ngang_mm} ± 5",
+        "d47": f"{hong_mm} ± 5" if gusset_m > 0 else 0,
+        "d37": tsvh.dan_cat_do_sau_dia_xep_hong(hong_mm) if gusset_m > 0 else None,
+        "params": dan2_params,
+    }
+    if gusset_m > 0 and not dan2["d37"]:
+        warnings.append(f"Dán 2: không tìm thấy 'Độ sâu dĩa xếp hông' cho hông {hong_mm}mm — để trống.")
+
+    # ---- Thổi 2 (Nhật ký SX)
+    thoi2 = None
+    if has_tui_long:
+        rong_cm = order.get("tui_long_rong_cm")
+        dai_cm = order.get("tui_long_dai_cm")
+        thoi2 = {"khoi_luong_g": int(round(ibw * 1000))}
+        if rong_cm and dai_cm:
+            thoi2["rong_mm"] = int(round(rong_cm * 10))
+            thoi2["dai_mm"] = int(round(dai_cm * 10))
+            thoi2["do_day"] = round(ibw * 1000 * 10000 / rong_cm / dai_cm / 2 / 0.93)
+            if day_loai == "dài" or order.get("tui_long_may_dinh_day"):
+                thoi2["day"] = "40-50"
+            elif day_loai == "ngắn":
+                thoi2["day"] = "20-30"
+            else:
+                thoi2["day"] = None
+                warnings.append("Kích thước đáy (Thổi 2): quy cách túi lồng không rõ LTMS/MTLS — để trống.")
+            thoi2["dun_keo"], thoi2["keo_bong"] = tsvh.thoi_tra_toc_do(thoi2["rong_mm"])
+            if not thoi2["dun_keo"]:
+                warnings.append(f"Không tìm thấy khoảng khổ {thoi2['rong_mm']}mm trong TSVH THỔI — để trống.")
+        else:
+            warnings.append("Thổi 2: thiếu rộng/dài túi lồng nên chưa điền kích thước/độ dày — để trống.")
+
+    # ---- Size text for In 1 (Kích thước SX / TP), format "320+80 x 680" per YCSX
+    def _kt(w_g, g_m, l_m):
+        ngang = int(round((w_g - g_m) * 1000))
+        hong = int(round(g_m * 1000))
+        dai = int(round(l_m * 1000))
+        return f"{ngang}+{hong} x {dai}" if hong else f"{ngang} x {dai}"
+
+    size_sx_mm = _kt(W, gusset_m, L)
+    w_tp = float(order.get("width_plus_gusset_tp_m", W))
+    g_tp = float(order.get("gusset_tp_m", gusset_m))
+    l_tp = float(order.get("length_tp_m", L))
+    size_tp_mm = _kt(w_tp, g_tp, l_tp)
 
     fields = {
         "customer": order.get("customer", ""), "product_name": order.get("product_name", ""),
@@ -392,45 +682,48 @@ def compute(order, family, so_mau_in):
         "so_phieu_sx": order.get("so_phieu_sx", "SX" + str(order.get("order_id", ""))[-6:]),
         "qty": int(qty) if qty == int(qty) else qty,
         "bag_length_m": L, "width_plus_gusset_m": W,
-        "sl_in_thuc_te_m": sl_in, "so_mau_in": so_mau_in,
-        "kho_manh": kho_manh, "kho_mang": kho_mang, "kho_giay": kho_giay,
-        "inner_bag_weight_kg": ibw,
-        "thanh_pham_du_kien": thanh_default,
+        "tolerance": tol, "bao_type": bao_type,
+        "has_print": has_print, "has_tui_long": has_tui_long,
+        "so_mau_in": so_mau_in if has_print else 0,
+        "inner_bag_weight_kg": ibw if has_tui_long else None,
+        "gusset_m": gusset_m, "width_m": width_m,
+        "kho_manh": kho_manh, "kho_mang": kho_mang if bao_type == "BOPP" else None,
+        "kho_giay": kho_giay if bao_type == "KP" else None,
+        "sl_in_thuc_te_m": sl_in, "trang_sl": trang_sl,
+        "thanh_pham_du_kien": thanh_pham,
         "bag_type_label": "Bao OPP" if family == "opp" else "Bao KP",
-        "size_sx_mm": _size_mm(order, W, L, tp=False),
-        "size_tp_mm": _size_mm(order, W, L, tp=True),
-        "sl_theo_po_m": sl_in,
+        "size_sx_mm": size_sx_mm, "size_tp_mm": size_tp_mm,
+        "sl_theo_po_m": trang_sl,
+        # NVL names/codes
+        "manh_ten": manh["ten"] if manh else None, "manh_ma": manh["ma"] if manh else None,
+        "manh_kg": trang_g17,
+        "f801c_ten": f801c["ten"] if f801c else "F801C",
+        "taical_ten": taical["ten"] if taical else "Taical",
+        "trang_g18": trang_g18, "trang_g19": trang_g19, "trang_g20": trang_g20,
+        "mang_ten": mang["ten"] if mang else None, "mang_ma": mang["ma"] if mang else None,
+        "giay_ten": giay["ten"] if giay else None, "giay_ma": giay["ma"] if giay else None,
+        "mang_bopp_kg": mang_bopp_kg,
+        "dung_moai_opp_kg": dung_moai_opp_kg, "dung_moai_ea_kg": dung_moai_ea_kg,
+        "giay_kraft_kg": giay_kraft_kg,
+        "giay_kraft_code": giay["ma"] if giay else order.get("giay_kraft_code", "GN07010200001"),
+        "kraft_name": giay["ten"] if giay else (order.get("kraft_name")
+                     or f"Giấy Kraft {order.get('giay_kraft_mau','vàng')} "
+                        f"{order.get('giay_kraft_xuatxu','Nhật')} "
+                        f"K{int(round(kho_giay*1000))} ĐL70"),
+        # Dán
+        "dan_c17": dan_c17, "dan_d17": dan_d17, "dan_c18": dan_c18,
+        "dan_g17": dan_g17, "dan_g18": dan_g18, "glue_total_kg": glue_total_kg,
+        # May
+        "chi_may_kg": chi_may_kg, "day_bo_bao_ten": day_bo_bao_ten, "day_bo_bao_kg": day_bo_bao_kg,
+        "nep_rows": nep_rows,
+        # Thổi
+        "tui_ldpe_ten": tui_ldpe_ten, "tui_g17": tui_g17, "tui_g18": tui_g18,
+        "tui_ten": tui_ten, "tui_ma": tui_ma,
+        "quy_cach_day": quy_cach_day, "day_loai": day_loai,
+        # Tráng 2 / Dán 2 / Thổi 2
+        "trang2": trang2, "dan2": dan2, "thoi2": thoi2,
+        "warnings": warnings,
     }
-
-    # ---- material norms
-    if family == "opp":
-        c = CONST["in_opp"]
-        fields["mang_bopp_kg"] = round(sl_in * kho_mang * c["mang_bopp_coeff"], 4)
-        fields["dung_moai_opp_kg"] = round(c["dung_moai_opp_coeff"] * sl_in * c["dung_moai_opp_share"], 4)
-        fields["dung_moai_ea_kg"] = round(c["dung_moai_opp_coeff"] * sl_in * c["dung_moai_ea_share"], 4)
-    else:
-        gk = sl_in * kho_giay * (CONST["dinh_luong_giay_kraft_gm2"] / 1000)
-        fields["giay_kraft_kg"] = round(gk, 4)
-        fields["giay_kraft_code"] = order.get("giay_kraft_code", "GN07010200001")
-        fields["kraft_name"] = order.get("kraft_name") or (
-            f"Giấy Kraft {order.get('kraft_color', 'vàng')} Nhật "
-            f"K{order.get('kraft_grade', '1020')} ĐL{int(CONST['dinh_luong_giay_kraft_gm2'])}"
-        )
-
-    # ---- Dán (glue) — written into Dán 2 rows 18-20
-    coeff = ov.get("dan_keo_coeff", CONST["dan"]["keo_coeff_opp"] if family == "opp" else CONST["dan"]["keo_coeff_kp"])
-    glue_total = qty * L * coeff / 1000
-    if ov.get("glue") == "9415_60_vistamax_40":
-        fields["glue_rows"] = [
-            ("9415", "NHPPFC9415G01", 0.6, round(glue_total * 0.6, 4)),
-            ("Vistamaxx", "NHVITAMAX0001", 0.4, round(glue_total * 0.4, 4)),
-        ]
-    else:
-        fields["glue_rows"] = [
-            ("F801C", "NHPPNSF801C001", 0.5, round(glue_total * 0.5, 4)),
-            ("Vistamaxx", "NHVITAMAX0001", 0.5, round(glue_total * 0.5, 4)),
-        ]
-    fields["glue_total_kg"] = round(glue_total, 4)
     return fields
 
 
@@ -444,15 +737,6 @@ def _dims_lookup(order, key):
     return 0
 
 
-def _size_mm(order, W, L, tp):
-    wmm = order.get("width_cm"); gmm = order.get("gusset_cm"); lmm = order.get("bag_length_m")
-    if wmm and gmm:
-        wmm, gmm = int(wmm), int(gmm)
-        lmm = int(round(L * 1000))
-        return f"({wmm*10} + {gmm*10}) x {lmm}"
-    return f"{int(round(W*1000))} x {int(round(L*1000))}"
-
-
 # -------------------------------------------------------------------- fillers
 def _set(xp, sheet, ref, value):
     if value is None or value == "":
@@ -460,88 +744,230 @@ def _set(xp, sheet, ref, value):
     xp.set_value(sheet, ref, value)
 
 
+def _blank(xp, sheet, ref):
+    xp.set_value(sheet, ref, None)
+
+
 def fill_dinh_muc(template_path, family, fields, so_mau_in, out_path):
     xp = XlsxPatch(template_path)
     cm = CELLMAP["dinh_muc"]
+    bao_type = fields["bao_type"]
+    has_print = fields["has_print"]
+    has_tui_long = fields["has_tui_long"]
 
-    # --- In sheet: header + both info tables ---
+    def present(sheet):
+        return sheet in xp.sheet_paths
+
+    # --- In sheet: header + info tables ---
     for region in ("header", "info_table_M", "info_table_C"):
         for ref, field in cm["In"].get(region, {}).items():
             _set(xp, "In", ref, fields.get(field))
     _set(xp, "In", "G29", fields.get("thanh_pham_du_kien"))
 
-    # --- In sheet: materials ---
-    if family == "opp":
-        m = cm["In"]["materials_opp"]
-        for row, spec in m.items():
-            if row == "22_26" or row.startswith("_"):
-                continue
-            for col, val in spec.items():
-                if val in fields:
-                    _set(xp, "In", f"{col}{row}", fields[val])
+    # --- In sheet: materials (print) ---
+    if has_print:
+        if bao_type == "BOPP":
+            _set(xp, "In", "C18", fields.get("mang_ten"))
+            _set(xp, "In", "D18", fields.get("mang_ma"))
+            _set(xp, "In", "F18", "Kg")
+            _set(xp, "In", "G18", fields.get("mang_bopp_kg"))
+            _set(xp, "In", "G19", fields.get("sl_in_thuc_te_m"))
+            _set(xp, "In", "G20", fields.get("dung_moai_opp_kg"))
+            _set(xp, "In", "G21", fields.get("dung_moai_ea_kg"))
+            inks = INK["opp"]
+            for i in range(5):  # rows 22-26
+                r = 22 + i
+                xp.set_value("In", f"G{r}", "")
+                if i < fields["so_mau_in"]:
+                    _set(xp, "In", f"C{r}", inks[i]["name"])
+                    _set(xp, "In", f"D{r}", inks[i]["code"])
+                    _set(xp, "In", f"B{r}", 4 + i)
+                    _set(xp, "In", f"F{r}", "Kg")
                 else:
-                    _set(xp, "In", f"{col}{row}", val)
-        # ink color rows 22..(22+N-1). Names/codes set; kg LEFT BLANK (design-specific,
-        # unknown until production — that's why "số màu in" is the only question).
-        inks = INK["opp"]
-        for i in range(5):  # rows 22-26
-            r = 22 + i
-            xp.set_value("In", f"G{r}", "")  # always clear kg
-            if i < so_mau_in:
-                _set(xp, "In", f"C{r}", inks[i]["name"])
-                _set(xp, "In", f"D{r}", inks[i]["code"])
-                _set(xp, "In", f"B{r}", 4 + i)
-                _set(xp, "In", f"F{r}", "Kg")
-            else:
-                xp.set_value("In", f"C{r}", ""); xp.set_value("In", f"D{r}", "")
+                    xp.set_value("In", f"C{r}", ""); xp.set_value("In", f"D{r}", "")
+        else:
+            _set(xp, "In", "C18", fields.get("giay_ten") or fields.get("kraft_name"))
+            _set(xp, "In", "D18", fields.get("giay_kraft_code"))
+            _set(xp, "In", "F18", "Kg")
+            _set(xp, "In", "G18", fields.get("giay_kraft_kg"))
+            _set(xp, "In", "G19", fields.get("sl_in_thuc_te_m"))
+            inks = INK["flexo"]
+            for i in range(4):  # rows 20-23
+                r = 20 + i
+                xp.set_value("In", f"G{r}", "")
+                if i < fields["so_mau_in"]:
+                    _set(xp, "In", f"C{r}", inks[i]["name"])
+                    _set(xp, "In", f"D{r}", inks[i]["code"])
+                    _set(xp, "In", f"B{r}", 2 + i)
+                    _set(xp, "In", f"F{r}", "Kg")
+                else:
+                    xp.set_value("In", f"C{r}", ""); xp.set_value("In", f"D{r}", "")
     else:
-        m = cm["In"]["materials_paper_kp"]
-        for row, spec in m.items():
-            if row == "20_up" or row.startswith("_"):
-                continue
-            for col, val in spec.items():
-                if val in fields:
-                    _set(xp, "In", f"{col}{row}", fields[val])
-                else:
-                    _set(xp, "In", f"{col}{row}", val)
-        inks = INK["flexo"]
-        for i in range(4):  # rows 20-23
-            r = 20 + i
-            xp.set_value("In", f"G{r}", "")  # kg filled at production
-            if i < so_mau_in:
-                _set(xp, "In", f"C{r}", inks[i]["name"])
-                _set(xp, "In", f"D{r}", inks[i]["code"])
-                _set(xp, "In", f"B{r}", 2 + i)
-                _set(xp, "In", f"F{r}", "Kg")
-            else:
-                xp.set_value("In", f"C{r}", ""); xp.set_value("In", f"D{r}", "")
+        # không in: blank leftover G formulas so the (hidden) sheet carries no stale data
+        if bao_type == "BOPP":
+            for ref in ("G18", "G19", "G20", "G21"):
+                xp.set_value("In", ref, None)
 
-    # --- Stage material sheets: header + info table ---
+    # --- In 2 (materials mirror) ---
+    if has_print and present("In 2"):
+        _set(xp, "In 2", "B18", fields.get("mang_ten") or fields.get("giay_ten") or fields.get("kraft_name"))
+        _set(xp, "In 2", "C18", fields.get("mang_ma") or fields.get("giay_kraft_code"))
+        if bao_type == "BOPP":
+            _set(xp, "In 2", "B20", "Dung môi OPP")
+            _set(xp, "In 2", "C20", "PDMTOLUENE001")
+            _set(xp, "In 2", "B21", "Dung môi EA")
+            _set(xp, "In 2", "C21", "PDMEA00001")
+
+    # --- Stage material sheets: header + info table M ---
     for sheet in ("Tráng", "Dán", "Thổi", "May"):
-        if sheet not in xp.sheet_paths:
+        if not present(sheet):
             continue
         for region in ("header", "info_table_M"):
             for ref, field in cm.get(sheet, {}).get(region, {}).items():
                 _set(xp, sheet, ref, fields.get(field))
 
-    # --- Stage sheets: headers + stage values ---
-    for sheet in ("May 1", "Chia biên 2", "Dán 2"):
-        if sheet not in xp.sheet_paths:
-            continue
-        for region in ("header", "stage"):
-            for ref, field in cm.get(sheet, {}).get(region, {}).items():
-                if ref.startswith("_"):
-                    continue
-                _set(xp, sheet, ref, fields.get(field))
-    # Dán 2 glue rows 18-20
-    if "Dán 2" in xp.sheet_paths:
-        for i, (name, code, ratio, kg) in enumerate(fields["glue_rows"]):
-            r = 18 + i
-            _set(xp, "Dán 2", f"B{r}", name)
-            _set(xp, "Dán 2", f"D{r}", code)
-            _set(xp, "Dán 2", f"E{r}", ratio)
-            _set(xp, "Dán 2", f"F{r}", "Kg")
-            _set(xp, "Dán 2", f"G{r}", kg)
+    # --- Tráng ---
+    _set(xp, "Tráng", "M9", fields.get("trang_sl"))
+    _set(xp, "Tráng", "M10", fields.get("kho_manh"))
+    if bao_type == "BOPP":
+        _set(xp, "Tráng", "M11", fields.get("kho_mang"))
+    else:
+        _set(xp, "Tráng", "M12", fields.get("kho_giay"))
+    _set(xp, "Tráng", "C17", fields.get("manh_ten"))
+    _set(xp, "Tráng", "D17", fields.get("manh_ma"))
+    _set(xp, "Tráng", "G17", fields.get("manh_kg"))
+    _set(xp, "Tráng", "C18", fields.get("f801c_ten"))
+    _set(xp, "Tráng", "C19", fields.get("taical_ten"))
+    _set(xp, "Tráng", "G18", fields.get("trang_g18"))
+    _set(xp, "Tráng", "G19", fields.get("trang_g19"))
+    if bao_type == "BOPP":
+        _set(xp, "Tráng", "G20", fields.get("trang_g20"))
+    if not has_print:
+        # vật liệu chính chuyển xuống Tráng (dòng STT4)
+        if bao_type == "KP":
+            _set(xp, "Tráng", "C20", fields.get("giay_ten") or fields.get("kraft_name"))
+            _set(xp, "Tráng", "D20", fields.get("giay_kraft_code"))
+            _set(xp, "Tráng", "F20", "Kg")
+            _set(xp, "Tráng", "G20", fields.get("giay_kraft_kg"))
+        else:
+            _set(xp, "Tráng", "C20", fields.get("mang_ten"))
+            _set(xp, "Tráng", "D20", fields.get("mang_ma"))
+            _set(xp, "Tráng", "F20", "Kg")
+            _set(xp, "Tráng", "G20",
+                 round(fields["trang_sl"] * (fields["kho_mang"] or 0) * 0.01584, 4))
+
+    # --- Dán ---
+    _set(xp, "Dán", "M10", fields.get("kho_manh"))
+    _set(xp, "Dán", "C17", fields.get("dan_c17"))
+    _set(xp, "Dán", "D17", fields.get("dan_d17"))
+    _set(xp, "Dán", "G17", fields.get("dan_g17"))
+    _set(xp, "Dán", "C18", fields.get("dan_c18"))
+    _set(xp, "Dán", "G18", fields.get("dan_g18"))
+
+    # --- Thổi (túi lồng) ---
+    if has_tui_long and present("Thổi"):
+        _set(xp, "Thổi", "C17", fields.get("tui_ldpe_ten"))
+        _set(xp, "Thổi", "G17", fields.get("tui_g17"))
+        _set(xp, "Thổi", "G18", fields.get("tui_g18"))
+        _set(xp, "Thổi", "C19", fields.get("tui_ten"))
+        _set(xp, "Thổi", "D19", fields.get("tui_ma"))
+
+    # --- May ---
+    _set(xp, "May", "G17", fields.get("chi_may_kg"))
+    _set(xp, "May", "C18", fields.get("day_bo_bao_ten"))
+    _set(xp, "May", "G18", fields.get("day_bo_bao_kg"))
+    nep_rows = fields.get("nep_rows", [])
+    if nep_rows:
+        for i, nep in enumerate(nep_rows):
+            r = 21 + i
+            _set(xp, "May", f"C{r}", nep["name"])
+            _set(xp, "May", f"D{r}", nep["code"])
+            _set(xp, "May", f"G{r}", nep["kg"])
+        if len(nep_rows) == 1:
+            _set(xp, "May", "G22", 0)
+    else:
+        _blank(xp, "May", "C21")
+        _blank(xp, "May", "D21")
+        _set(xp, "May", "G21", 0)
+        _set(xp, "May", "G22", 0)
+
+    # --- May 2 (Quy cách) ---
+    if present("May 2"):
+        cell_qc = "C37" if bao_type == "BOPP" else "C35"
+        if has_tui_long:
+            _set(xp, "May 2", cell_qc, fields.get("quy_cach_day"))
+        else:
+            _blank(xp, "May 2", cell_qc)
+
+    # --- In 1 — kích thước SX/TP (Lệnh SX sheets pull from here by formula) ---
+    if present("In 1"):
+        _set(xp, "In 1", "C17", fields.get("size_sx_mm"))
+        _set(xp, "In 1", "C18", fields.get("size_tp_mm"))
+
+    # --- Tráng 2 ---
+    if present("Tráng 2"):
+        if bao_type == "KP":
+            _set(xp, "Tráng 2", "B21", fields.get("manh_ten"))
+            _set(xp, "Tráng 2", "C21", fields.get("manh_ma"))
+            if not has_print:
+                _set(xp, "Tráng 2", "A24", 5)
+                _set(xp, "Tráng 2", "B24", fields.get("giay_ten") or fields.get("kraft_name"))
+                _set(xp, "Tráng 2", "C24", fields.get("giay_kraft_code"))
+                _set(xp, "Tráng 2", "F24", "Kg")
+                _set(xp, "Tráng 2", "G24", fields.get("giay_kraft_kg"))
+        t2 = fields["trang2"]
+        cells2 = {"KP":   {"kho_tp": "M32", "dl_tp": "M33", "toc_do": "D31", "dun_keo": "D50", "khuon": "D52"},
+                  "BOPP": {"kho_tp": "M31", "dl_tp": "M32", "toc_do": "D30", "dun_keo": "D49", "khuon": "D51"}}[bao_type]
+        _set(xp, "Tráng 2", cells2["kho_tp"], t2["kho_tp_mm"])
+        _set(xp, "Tráng 2", cells2["dl_tp"], t2["dl_tp"])
+        _set(xp, "Tráng 2", cells2["toc_do"], t2["toc_do_may"])
+        _set(xp, "Tráng 2", cells2["dun_keo"], t2["dun_keo"])
+        _set(xp, "Tráng 2", cells2["khuon"], t2["khuon"])
+
+    # --- Dán 2 ---
+    if present("Dán 2"):
+        dan2 = fields["dan2"]
+        _set(xp, "Dán 2", "D34", dan2["len_mm"])
+        _set(xp, "Dán 2", "D45", dan2["d45"])
+        _set(xp, "Dán 2", "D46", dan2["d46"])
+        _set(xp, "Dán 2", "D47", dan2["d47"])
+        _set(xp, "Dán 2", "D30", dan2["params"].get("toc_do_may"))
+        _set(xp, "Dán 2", "D31", dan2["params"].get("toc_do_keo"))
+        _set(xp, "Dán 2", "D32", dan2["params"].get("lai_cuon"))
+        _set(xp, "Dán 2", "D33", dan2["params"].get("luc_ep_duong_dan"))
+        _set(xp, "Dán 2", "D36", dan2["params"].get("dieu_chinh_duong"))
+        if dan2["d37"] is not None:
+            _set(xp, "Dán 2", "D37", dan2["d37"])
+        else:
+            _blank(xp, "Dán 2", "D37")
+
+    # --- Thổi 2 ---
+    if has_tui_long and present("Thổi 2") and fields.get("thoi2"):
+        t2 = fields["thoi2"]
+        cells = {"KP":   {"rong": "D43", "dai": "D44", "day": "D45", "do_day": "D46",
+                          "khoi_luong": "D47", "dun_keo": "D36", "keo_bong": "D37"},
+                 "BOPP": {"rong": "D45", "dai": "D46", "day": "D47", "do_day": "D48",
+                          "khoi_luong": "D49", "dun_keo": "D39", "keo_bong": "D40"}}[bao_type]
+        if "rong_mm" in t2:
+            _set(xp, "Thổi 2", cells["rong"], t2["rong_mm"])
+            _set(xp, "Thổi 2", cells["dai"], t2["dai_mm"])
+            _set(xp, "Thổi 2", cells["day"], t2.get("day"))
+            _set(xp, "Thổi 2", cells["do_day"], t2["do_day"])
+        _set(xp, "Thổi 2", cells["khoi_luong"], t2["khoi_luong_g"])
+        _set(xp, "Thổi 2", cells["dun_keo"], t2.get("dun_keo"))
+        _set(xp, "Thổi 2", cells["keo_bong"], t2.get("keo_bong"))
+
+    # --- Sheet X + hidden sheets ---
+    if not has_print and present("X"):
+        xp.clear_sheet_images("X")
+    if not has_print:
+        for sn in ("In", "In 1", "In 2"):
+            if present(sn):
+                xp.set_sheet_state(sn, "hidden")
+    if not has_tui_long:
+        for sn in ("Thổi", "Thổi 1", "Thổi 2"):
+            if present(sn):
+                xp.set_sheet_state(sn, "hidden")
 
     xp.save(out_path)
     return out_path

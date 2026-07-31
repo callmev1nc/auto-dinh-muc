@@ -31,16 +31,17 @@
     "f801c_share_kp": 0.90,
     "f801c_share_opp": 0.85,
     "f801c_dinh_luong": 0.02,
-    "taical_share": 0.10,
+    "taical_share_kp": 0.10,
+    "taical_share_opp": 0.07,
     "taical_dinh_luong": 0.02,
-    "hat_mau_share_opp": 0.05,
+    "hat_mau_share_opp": 0.08,
     "hat_mau_dinh_luong": 0.02
   },
 
   "dan": {
     "keo_coeff_kp": 3.314,
-    "keo_coeff_opp": 3.2912,
-    "_keo_coeff_opp_note": "Tuned to 40KG example (gives F801C=Vistamax=4.0482 kg each). Quy trình text states 3.114; verify with more samples and adjust.",
+    "keo_coeff_opp": 3.114,
+    "_keo_coeff_opp_note": "Per skill rule (dán G = M9 x share x coeff/1000); matches the Dán template's baked formula.",
     "f801c_vistamax_share_each": 0.50,
     "special_9415_share": 0.60,
     "special_vistamax_share": 0.40
