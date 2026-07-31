@@ -54,7 +54,7 @@ HTML_FORM = """
     <input type="file" name="file" accept=".json,.xlsx" required>
 
     <label for="colors">Số màu in</label>
-    <input type="number" name="colors" min="1" max="12" value="3" required>
+    <input type="number" name="colors" min="0" max="12" value="3" required>
 
     <button type="submit" id="btn">Generate & Download ZIP</button>
   </form>
@@ -105,8 +105,8 @@ async def generate_endpoint(
     file: UploadFile = File(...),
     colors: int = Form(...),
 ):
-    if colors < 1:
-        raise HTTPException(400, "Số màu in phải ≥ 1")
+    if colors < 0:
+        raise HTTPException(400, "Số màu in không được âm")
 
     suffix = Path(file.filename).suffix.lower()
     if suffix not in (".json", ".xlsx"):

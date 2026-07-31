@@ -398,6 +398,8 @@ def validate_inputs(order, family, so_mau_in):
     if float(order.get("width_plus_gusset_m") or 0) <= 0:
         errors.append("- Kích thước ngang (width_plus_gusset_m) không hợp lệ — kiểm tra dòng 'Kích thước' trong spec")
     has_print = _detect_has_print(order)
+    if so_mau_in < 0:
+        errors.append("- Số màu in (so_mau_in) không được âm")
     if has_print and so_mau_in < 1:
         errors.append("- Số màu in (so_mau_in) phải ≥ 1 — nhập số màu thực tế")
     text = (str(order.get("spec", "")) + " " + str(order.get("product_name", ""))).lower()
@@ -1147,17 +1149,17 @@ def main():
         so_mau_in = args.colors
     else:
         so_mau_in = 0
-        while so_mau_in < 1:
-            raw = input("Số màu in? (number of print colors — the only unknown): ").strip()
+        while so_mau_in < 0:
+            raw = input("Số màu in? (number of print colors — nhập 0 nếu không in): ").strip()
             if raw:
                 try:
                     so_mau_in = int(raw)
                 except ValueError:
                     pass
-            if so_mau_in < 1:
-                print("Số màu in phải ≥ 1. Vui lòng nhập lại.", file=sys.stderr)
-    if so_mau_in < 1:
-        print("Số màu in phải ≥ 1.", file=sys.stderr)
+            if so_mau_in < 0:
+                print("Số màu in không được âm. Vui lòng nhập lại.", file=sys.stderr)
+    if so_mau_in < 0:
+        print("Số màu in không được âm.", file=sys.stderr)
         sys.exit(2)
 
     try:
