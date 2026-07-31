@@ -418,6 +418,23 @@ class TestInputParsing:
         except InputValidationError as e:
             assert "túi lồng" in str(e) or "inner_bag_weight" in str(e)
 
+    def test_validate_inputs_khong_long_tui_no_ibw_ok(self):
+        # spec says "Quy cách lồng túi PE: không lồng túi" → must NOT require ibw
+        from generate import validate_inputs
+        order = dict(SAMPLE_25KG)
+        order["spec"] = ("1.Kích thước: 45x75 cm\n"
+                         "5. Quy cách lồng túi PE: không lồng túi")
+        order["product_name"] = "Bao KP"
+        del order["inner_bag_weight_kg"]
+        validate_inputs(order, "paper_kp", 2)  # should not raise
+
+    def test_has_tui_long_khong_long(self):
+        from generate import _has_tui_long
+        order = dict(SAMPLE_25KG)
+        order["spec"] = "5. Quy cách lồng túi PE: không lồng túi"
+        order["product_name"] = "Bao KP"
+        assert _has_tui_long(order) is False
+
     def test_validate_inputs_opp_missing_kho_mang(self):
         from generate import validate_inputs, InputValidationError
         order = dict(SAMPLE_40KG)

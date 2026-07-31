@@ -232,6 +232,8 @@ def _parse_tui_long(spec):
     tui_long_kg, tui_long_quy_cach_day}. Returns {} when the spec has no liner info."""
     if not spec or not any(k in spec.lower() for k in _LINER_KW):
         return {}
+    if any(k in spec.lower() for k in _LINER_NO_KW):
+        return {}
     out = {}
     loai = "thường"
     m_loai = re.search(r"(?:túi (?:lồng )?pe|pe)\s*(rin|thường)", spec, re.IGNORECASE)
@@ -268,9 +270,11 @@ def _detect_has_print(order, so_mau_in=None):
 def _has_tui_long(order):
     if order.get("has_tui_long") is not None:
         return bool(order.get("has_tui_long"))
+    text = (" ".join([str(order.get("spec", "")), str(order.get("product_name", ""))])).lower()
+    if any(k in text for k in _LINER_NO_KW):
+        return False
     if float(order.get("inner_bag_weight_kg") or 0) > 0:
         return True
-    text = (" ".join([str(order.get("spec", "")), str(order.get("product_name", ""))])).lower()
     return any(k in text for k in _LINER_KW)
 
 
@@ -297,6 +301,8 @@ def _to_num(v):
 
 
 _LINER_KW = ("lồng túi", "túi lồng", "pe thường", "pe rin", "pe lồng")
+_LINER_NO_KW = ("không lồng túi", "khong long tui", "không lồng", "khong long",
+                "không lót túi", "khong lot tui", "không túi lồng", "khong tui long")
 
 
 def _extract_pe_liner_weight(text):
@@ -403,8 +409,7 @@ def validate_inputs(order, family, so_mau_in):
     has_print = _detect_has_print(order, so_mau_in)
     if so_mau_in < 0:
         errors.append("- Số màu in (so_mau_in) không được âm")
-    text = (str(order.get("spec", "")) + " " + str(order.get("product_name", ""))).lower()
-    has_liner = any(k in text for k in _LINER_KW)
+    has_liner = _has_tui_long(order)
     if has_liner and float(order.get("inner_bag_weight_kg") or 0) <= 0:
         errors.append("- inner_bag_weight_kg (Quy cách lồng túi PE) không hợp lệ — kiểm tra dòng 'Quy cách lồng túi PE' trong spec")
     if family == "opp" and has_print:
