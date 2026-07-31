@@ -252,8 +252,11 @@ def _parse_tui_long(spec):
     return out
 
 
-def _detect_has_print(order):
-    """A bag is printed unless the order/spec/product name says 'không in'."""
+def _detect_has_print(order, so_mau_in=None):
+    """A bag is printed unless the order/spec/product name says 'không in'.
+    so_mau_in=0 overrides everything: 0 means 'không in' (user's explicit choice)."""
+    if so_mau_in == 0:
+        return False
     if order.get("has_print") is not None:
         return bool(order.get("has_print"))
     text = (" ".join([
@@ -397,11 +400,9 @@ def validate_inputs(order, family, so_mau_in):
         errors.append("- Kích thước dài (bag_length_m) không hợp lệ — kiểm tra dòng 'Kích thước' trong spec")
     if float(order.get("width_plus_gusset_m") or 0) <= 0:
         errors.append("- Kích thước ngang (width_plus_gusset_m) không hợp lệ — kiểm tra dòng 'Kích thước' trong spec")
-    has_print = _detect_has_print(order)
+    has_print = _detect_has_print(order, so_mau_in)
     if so_mau_in < 0:
         errors.append("- Số màu in (so_mau_in) không được âm")
-    if has_print and so_mau_in < 1:
-        errors.append("- Số màu in (so_mau_in) phải ≥ 1 — nhập số màu thực tế")
     text = (str(order.get("spec", "")) + " " + str(order.get("product_name", ""))).lower()
     has_liner = any(k in text for k in _LINER_KW)
     if has_liner and float(order.get("inner_bag_weight_kg") or 0) <= 0:
@@ -425,7 +426,7 @@ def compute(order, family, so_mau_in):
     warnings = []
     items = nvl.load_nvl_list(NVL_PATH) if os.path.isfile(NVL_PATH) else []
 
-    has_print = _detect_has_print(order)
+    has_print = _detect_has_print(order, so_mau_in)
     has_tui_long = _has_tui_long(order)
     ibw = float(order.get("inner_bag_weight_kg") or 0)
     if not has_tui_long:

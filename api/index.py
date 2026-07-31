@@ -53,7 +53,7 @@ HTML_FORM = """
     <label for="file">File đơn hàng (JSON / XLSX)</label>
     <input type="file" name="file" accept=".json,.xlsx" required>
 
-    <label for="colors">Số màu in</label>
+    <label for="colors">Số màu in (0 = không in)</label>
     <input type="number" name="colors" min="0" max="12" value="3" required>
 
     <button type="submit" id="btn">Generate & Download ZIP</button>

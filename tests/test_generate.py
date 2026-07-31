@@ -387,13 +387,24 @@ class TestInputParsing:
         except InputValidationError as e:
             assert "Số lượng" in str(e)
 
-    def test_validate_inputs_raises_on_zero_colors(self):
+    def test_validate_inputs_accepts_zero_colors(self):
+        from generate import validate_inputs
+        # 0 = không in — valid even for a bag auto-detected as printed
+        validate_inputs(SAMPLE_25KG, "paper_kp", 0)
+
+    def test_validate_inputs_raises_on_negative_colors(self):
         from generate import validate_inputs, InputValidationError
         try:
-            validate_inputs(SAMPLE_25KG, "paper_kp", 0)
+            validate_inputs(SAMPLE_25KG, "paper_kp", -1)
             assert False, "expected InputValidationError"
         except InputValidationError as e:
-            assert "so_mau_in" in str(e)
+            assert "không được âm" in str(e)
+
+    def test_compute_zero_colors_forces_khong_in(self):
+        from generate import compute
+        fields = compute(dict(SAMPLE_25KG), "paper_kp", 0)
+        assert fields["so_mau_in"] == 0, f"so_mau_in={fields['so_mau_in']}"
+        assert fields["has_print"] is False, "0 màu must force không in"
 
     def test_validate_inputs_raises_on_missing_liner_ibw(self):
         from generate import validate_inputs, InputValidationError
