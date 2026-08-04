@@ -64,8 +64,9 @@ in Cấu trúc (`Bao BOPP in ống đồng`, `Bao KP in Flexo`, `Bao in offset`)
 
 **Tráng:**
 - Mành = qty × L × khổ mành × ĐL mành (trắng 70 / trong 72 / **4 Oranges 75** g/m²)
-- F801C = qty × L × khổ mành × 0.90 (OPP 0.85) × 0.02
-- Taical = qty × L × khổ mành × 0.10 × 0.02  (OPP thêm hạt màu × 0.05 × 0.02)
+- F801C = qty × L × khổ mành × 0.85 (OPP) / 0.90 (KP) × 0.02
+- Taical = qty × L × khổ mành × tỷ lệ × 0.02 — đơn thường **10%**, 4 Oranges & Thanh Phụng **7%**
+- Hạt màu (chỉ OPP) = qty × L × khổ mành × tỷ lệ × 0.02 — đơn thường **5%**, 4 Oranges & Thanh Phụng **8%**
 
 **Dán (glue — goes into Dán 2 rows 18–20):**
 - total = qty × L × coeff / 1000 ; coeff = 3.314 (KP) / 3.2912 (OPP, tuned)
@@ -80,6 +81,11 @@ in Cấu trúc (`Bao BOPP in ống đồng`, `Bao KP in Flexo`, `Bao in offset`)
 **May:**
 - Chỉ may = 0.6 kg / 1000 bao · Dây bó bao = 1 kg / 5000 bao
 - Nẹp = chiều rộng nẹp × định lượng nẹp × (rộng bao + 12 cm)  (KP 0.16 / OPP 0.106)
+
+**Đóng gói (bao/kiện — bảng TSVH ĐÓNG GÓI TSDGO, hiệu lực 1/10/2023):**
+- OPP: chiều dài ≥90cm → 200; 66–89cm → **300**; 60–65cm → 400
+- KP: ≥95cm → 100; 66–95cm → 200; ≤65cm → 300
+- Ghi vào sheet Đóng gói 2 (ô C32 Quy cách): "N bao/kiện".
 
 ## Standard dimensions lookup (cm) — when khổ màng/mành not stated
 | ngang+hông | chiều dài | màng in | mành |

@@ -67,6 +67,18 @@
       "_comment": "NHẬT KÝ SX — stage: Dán cắt. Glue materials rows 18-20 (B=name,D=code,E=ratio,F=unit,G=qty).",
       "header": {"C5": "order_id", "C6": "product_code", "C7": "product_name", "C8": "customer"},
       "stage": {"D16": "glue_total_kg", "_materials_rows_18_20": "from Dán formula (F801C/Vistamax 50-50, or 9415/Vistamax 60-40 for special customers)"}
+    },
+
+    "Đóng gói 1": {
+      "_comment": "LỆNH SẢN XUẤT — stage: Đóng gói. Số bao/kiện ghi ở Đóng gói 2 (C32).",
+      "header": {"C5": "order_id", "C6": "product_code", "C7": "product_name", "C8": "customer"},
+      "stage": {"C16": "bag_type_label", "C19": "qty", "C20": "qty"}
+    },
+
+    "Đóng gói 2": {
+      "_comment": "NHẬT KÝ SX — stage: Đóng gói. C32 Quy cách = 'N bao/kiện' (từ bảng TSVH ĐÓNG GÓI theo loại bao + chiều dài).",
+      "header": {"C5": "order_id", "C6": "product_code", "C7": "product_name", "C8": "customer"},
+      "stage": {"C16": "qty", "C32": "bao_kien_text"}
     }
   },
 

@@ -31,11 +31,11 @@
     "f801c_share_kp": 0.90,
     "f801c_share_opp": 0.85,
     "f801c_dinh_luong": 0.02,
-    "taical_share_kp": 0.10,
-    "taical_share_opp": 0.07,
+    "taical_share_default": 0.10,
     "taical_dinh_luong": 0.02,
-    "hat_mau_share_opp": 0.08,
-    "hat_mau_dinh_luong": 0.02
+    "hat_mau_share_default": 0.05,
+    "hat_mau_dinh_luong": 0.02,
+    "_note": "Tỷ lệ taical/hạt màu theo khách hàng: đơn thường 10%/5%; 4 Oranges & Thanh Phụng 7%/8% (overrides qua customer_rules.json). F801C giữ 85% (OPP) / 90% (KP)."
   },
 
   "dan": {
@@ -50,6 +50,20 @@
   "thoi": {
     "ldpe_share": 0.893,
     "taical_efpe_share": 0.107
+  },
+
+  "dong_goi_bao_kien": {
+    "_note": "Số bao/kiện theo loại bao và chiều dài bao (cm). Nguồn: TSVH ĐÓNG GÓI (TSDGO, hiệu lực 1/10/2023).",
+    "BOPP": [
+      {"len_cm_min": 90, "bao_kien": 200},
+      {"len_cm_min": 66, "bao_kien": 300},
+      {"len_cm_min": 60, "bao_kien": 400}
+    ],
+    "KP": [
+      {"len_cm_min": 95, "bao_kien": 100},
+      {"len_cm_min": 66, "bao_kien": 200},
+      {"len_cm_min": 0, "bao_kien": 300}
+    ]
   },
 
   "may": {

@@ -23,6 +23,23 @@ def _load_json(name):
 SAMPLE_25KG = _load_json("25kg_tan_chau.json")
 SAMPLE_40KG = _load_json("40kg_4oranges.json")
 
+SAMPLE_40KG_NORMAL = {
+    "_comment": "Normal (non-4O) OPP order with a PE-rin liner. Expected: Tráng taical 10% / hạt màu 5% "
+                "(not 7/8 — that's only 4 Oranges/Thanh Phụng); Thổi rin = 100% LDPE, 0 taical; "
+                "Đóng gói OPP dài 82cm = 300 bao/kiện.",
+    "customer": "CÔNG TY CỔ PHẦN HÃNG SƠN ĐÔNG Á",
+    "product_name": "Bao BT Waler Nội Thất Cao Cấp 40kg",
+    "product_code": "XD1KH00069BP0012",
+    "order_id": "26BA2IKH00010000004",
+    "so_phieu_sx": "SX000004",
+    "qty": 5000, "bag_length_m": 0.82, "width_plus_gusset_m": 0.5,
+    "width_cm": 42, "gusset_cm": 8, "inner_bag_weight_kg": 0.02, "kho_mang": 1.04,
+    "spec": ("1.Kích thước: (42+8) x 82 cm (±1)\n2.Thành phẩm: (42+8) x 79cm (±1)\n"
+             "3. Cấu trúc: Bao BOPP in ống đồng - Màng BOPP bóng - Ghép PP dệt trắng\n"
+             "5. Quy cách lồng túi PE: Lồng túi PE rin 50x92 (20gr) (LTMS)\n"
+             "6. Quy cách đóng gói: Đóng gói theo tiêu chuẩn BBAS."),
+}
+
 
 def _num(ws, cell):
     v = ws[cell].value
@@ -226,6 +243,16 @@ class Test40KgOpp:
         ws = self.wb["Thổi 2"]
         assert _num(ws, "D49") == 51, f"Thổi 2!D49={_num(ws, 'D49')}"
 
+    def test_trang2_4oranges_ratios(self):
+        ws = self.wb["Tráng 2"]
+        assert abs(_num(ws, "E22") - 0.07) < 1e-9, f"Tráng 2!E22={_num(ws, 'E22')}"
+        assert abs(_num(ws, "E23") - 0.08) < 1e-9, f"Tráng 2!E23={_num(ws, 'E23')}"
+
+    def test_thoi2_thuong_ratios(self):
+        ws = self.wb["Thổi 2"]
+        assert abs(_num(ws, "E18") - 0.893) < 1e-9, f"Thổi 2!E18={_num(ws, 'E18')}"
+        assert abs(_num(ws, "E19") - 0.107) < 1e-9, f"Thổi 2!E19={_num(ws, 'E19')}"
+
     def test_regression_values(self):
         assert _num(self.ws, "M9") == 2983.0, f"M9={_num(self.ws, 'M9')}"
         assert abs(_num(self.ws, "G18") - 49.1407) < 0.01, f"G18={_num(self.ws, 'G18')}"
@@ -246,6 +273,60 @@ class Test40KgOpp:
         for r in range(22, 27):
             v = _num(self.ws, f"G{r}")
             assert v is None or v == 0, f"In!G{r}={v} should be blank"
+
+
+class TestNormal40KgOpp:
+    """Normal OPP order (Hãng Sơn Đông Á) with PE-rin liner, 2 màu in.
+
+    Regression for the three fixed bugs:
+      * Tráng taical 10% / hạt màu 5% (7/8 chỉ dành cho 4 Oranges & Thanh Phụng).
+      * Thổi PE rin = 100% LDPE, không taical (tỷ lệ ở sheet Thổi 2).
+      * Đóng gói OPP dài 82cm = 300 bao/kiện (bảng TSVH ĐÓNG GÓI).
+    """
+
+    @classmethod
+    def setup_class(cls):
+        cls.family, cls.fields, cls.wb = _make_fixture(dict(SAMPLE_40KG_NORMAL), 2, "dm_test_normal_opp_")
+        cls.ws = cls.wb["In"]
+
+    @classmethod
+    def teardown_class(cls):
+        cls.wb.close()
+
+    def test_trang_ratios_normal_10_5(self):
+        ws = self.wb["Tráng"]
+        assert abs(_num(ws, "G19") - 9.1266) < 0.001, f"Tráng!G19={_num(ws, 'G19')}"
+        assert abs(_num(ws, "G20") - 4.5633) < 0.001, f"Tráng!G20={_num(ws, 'G20')}"
+        assert _str(ws, "C20") == "Hạt màu", f"Tráng!C20={_str(ws, 'C20')!r}"
+
+    def test_trang2_ratio_cells_normal(self):
+        ws = self.wb["Tráng 2"]
+        assert abs(_num(ws, "E21") - 0.85) < 1e-9, f"Tráng 2!E21={_num(ws, 'E21')}"
+        assert abs(_num(ws, "E22") - 0.10) < 1e-9, f"Tráng 2!E22={_num(ws, 'E22')}"
+        assert abs(_num(ws, "E23") - 0.05) < 1e-9, f"Tráng 2!E23={_num(ws, 'E23')}"
+
+    def test_thoi2_rin_100pct_ldpe(self):
+        ws = self.wb["Thổi 2"]
+        assert abs(_num(ws, "E18") - 1.0) < 1e-9, f"Thổi 2!E18={_num(ws, 'E18')}"
+        assert abs(_num(ws, "E19") - 0.0) < 1e-9, f"Thổi 2!E19={_num(ws, 'E19')}"
+
+    def test_thoi_sheet_rin_quantities(self):
+        ws = self.wb["Thổi"]
+        assert abs(_num(ws, "G17") - 105.0) < 0.01, f"Thổi!G17={_num(ws, 'G17')}"
+        assert _num(ws, "G18") == 0.0, f"Thổi!G18={_num(ws, 'G18')}"
+
+    def test_dong_goi_300_bao_kien(self):
+        ws = self.wb["Đóng gói 2"]
+        assert _str(ws, "C32") == "300 bao/kiện", f"Đóng gói 2!C32={_str(ws, 'C32')!r}"
+        assert self.fields.get("bao_kien") == 300, f"fields.bao_kien={self.fields.get('bao_kien')}"
+
+    def test_dong_goi_header_filled_and_residue_cleared(self):
+        ws = self.wb["Đóng gói 2"]
+        assert _str(ws, "C5") == "26BA2IKH00010000004", f"Đóng gói 2!C5={_str(ws, 'C5')!r}"
+        assert _str(ws, "C7") == "Bao BT Waler Nội Thất Cao Cấp 40kg", f"Đóng gói 2!C7={_str(ws, 'C7')!r}"
+        assert _str(ws, "C16") == "5000", f"Đóng gói 2!C16={_str(ws, 'C16')!r}"
+        for ref in ("V5", "W5", "X5"):
+            assert _str(ws, ref) == "", f"Đóng gói 2!{ref} residue not cleared: {_str(ws, ref)!r}"
 
 
 class TestKhongIn:

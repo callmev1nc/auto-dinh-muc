@@ -18,6 +18,12 @@
       "match": {"spec_contains_any": ["PE rin", "PE rín", "túi PE rin"]},
       "effect": {"thoi_ldpe_100pct": true, "thoi_no_taical": true},
       "note": "Nếu YCSX là túi PE rin thì dùng 100% LDPE, không dùng taical ở công đoạn Thổi."
+    },
+    {
+      "id": "4oranges_thanhphung_trang_ratios",
+      "match": {"customer_contains_any": ["4 ORANGES", "4ORANGES", "THANH PHỤNG", "THANH PHUNG"]},
+      "effect": {"trang_taical_share": 0.07, "trang_hat_mau_share": 0.08},
+      "note": "Tỷ lệ taical 7% / hạt màu 8% chỉ áp dụng cho đơn hàng 4 Oranges và Thanh Phụng; đơn thường là 10% / 5%."
     }
   ]
 }

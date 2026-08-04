@@ -375,6 +375,15 @@ def detect_family(order):
     raise InputValidationError("Cannot detect bag family from order. Set order['bag_family'] manually.")
 
 
+def _bao_kien(bao_type, length_cm):
+    """Số bao/kiện từ bảng TSVH ĐÓNG GÓI (TSDGO) theo loại bao + chiều dài (cm)."""
+    tiers = CONST["dong_goi_bao_kien"].get(bao_type, [])
+    for tier in tiers:
+        if length_cm >= tier["len_cm_min"]:
+            return tier["bao_kien"]
+    return None
+
+
 # ----------------------------------------------------------- customer overrides
 def apply_rules(order, family):
     text = (str(order.get("customer", "")) + " " + str(order.get("spec", ""))).lower()
@@ -428,6 +437,9 @@ def compute(order, family, so_mau_in):
     W = float(order.get("width_plus_gusset_m") or 0)
     tol = float(order.get("tolerance", CONST["dung_sai_default"]))
     bao_type = "BOPP" if family == "opp" else "KP"
+    # Tỷ lệ taical/hạt màu theo khách hàng: đơn thường 10%/5%; 4 Oranges & Thanh Phụng 7%/8%.
+    taical_share = float(ov.get("trang_taical_share", CONST["trang"]["taical_share_default"]))
+    hat_mau_share = float(ov.get("trang_hat_mau_share", CONST["trang"]["hat_mau_share_default"]))
     warnings = []
     items = nvl.load_nvl_list(NVL_PATH) if os.path.isfile(NVL_PATH) else []
 
@@ -515,11 +527,11 @@ def compute(order, family, so_mau_in):
     t = CONST["trang"]
     if bao_type == "BOPP":
         trang_g18 = round(trang_sl * kho_manh * t["f801c_dinh_luong"] * t["f801c_share_opp"], 4)
-        trang_g19 = round(trang_sl * kho_manh * t["taical_dinh_luong"] * t["taical_share_opp"], 4)
-        trang_g20 = round(trang_sl * kho_manh * t["hat_mau_dinh_luong"] * t["hat_mau_share_opp"], 4)
+        trang_g19 = round(trang_sl * kho_manh * t["taical_dinh_luong"] * taical_share, 4)
+        trang_g20 = round(trang_sl * kho_manh * t["hat_mau_dinh_luong"] * hat_mau_share, 4)
     else:
         trang_g18 = round(trang_sl * kho_manh * t["f801c_dinh_luong"] * t["f801c_share_kp"], 4)
-        trang_g19 = round(trang_sl * kho_manh * t["taical_dinh_luong"] * t["taical_share_kp"], 4)
+        trang_g19 = round(trang_sl * kho_manh * t["taical_dinh_luong"] * taical_share, 4)
         trang_g20 = None
 
     # ---- Dán stage (glue) — uses Tráng!M9 as the base quantity
@@ -622,6 +634,9 @@ def compute(order, family, so_mau_in):
         "toc_do_may": tsvh.TRANG_TOC_DO_MAY_CO_DINH,
         "dun_keo": tsvh.trang_tra_toc_do_dun_keo(kho_manh_mm),
         "khuon": tsvh.trang_chieu_rong_khuon_xa_keo(kho_manh_mm),
+        "f801c_share": t["f801c_share_opp"] if bao_type == "BOPP" else t["f801c_share_kp"],
+        "taical_share": taical_share,
+        "hat_mau_share": hat_mau_share if bao_type == "BOPP" else None,
     }
     if not trang2["dun_keo"]:
         warnings.append(f"Không tra được 'Tốc độ đùn keo' cho khổ mành {kho_manh_mm}mm — để trống.")
@@ -653,7 +668,12 @@ def compute(order, family, so_mau_in):
     if has_tui_long:
         rong_cm = order.get("tui_long_rong_cm")
         dai_cm = order.get("tui_long_dai_cm")
-        thoi2 = {"khoi_luong_g": int(round(ibw * 1000))}
+        is_rin = str(order.get("tui_long_loai", "thường")).lower() == "rin"
+        thoi2 = {
+            "khoi_luong_g": int(round(ibw * 1000)),
+            "ldpe_share": 1.0 if is_rin else CONST["thoi"]["ldpe_share"],
+            "taical_share": 0.0 if is_rin else CONST["thoi"]["taical_efpe_share"],
+        }
         if rong_cm and dai_cm:
             thoi2["rong_mm"] = int(round(rong_cm * 10))
             thoi2["dai_mm"] = int(round(dai_cm * 10))
@@ -683,6 +703,10 @@ def compute(order, family, so_mau_in):
     g_tp = float(order.get("gusset_tp_m", gusset_m))
     l_tp = float(order.get("length_tp_m", L))
     size_tp_mm = _kt(w_tp, g_tp, l_tp)
+
+    # ---- Đóng gói: số bao/kiện theo loại bao + chiều dài (bảng TSVH ĐÓNG GÓI)
+    bao_kien = _bao_kien(bao_type, int(round(L * 100)))
+    bao_kien_text = f"{bao_kien} bao/kiện" if bao_kien else None
 
     fields = {
         "customer": order.get("customer", ""), "product_name": order.get("product_name", ""),
@@ -728,6 +752,8 @@ def compute(order, family, so_mau_in):
         "tui_ldpe_ten": tui_ldpe_ten, "tui_g17": tui_g17, "tui_g18": tui_g18,
         "tui_ten": tui_ten, "tui_ma": tui_ma,
         "quy_cach_day": quy_cach_day, "day_loai": day_loai,
+        # Đóng gói
+        "bao_kien": bao_kien, "bao_kien_text": bao_kien_text,
         # Tráng 2 / Dán 2 / Thổi 2
         "trang2": trang2, "dan2": dan2, "thoi2": thoi2,
         "warnings": warnings,
@@ -931,6 +957,14 @@ def fill_dinh_muc(template_path, family, fields, so_mau_in, out_path):
         _set(xp, "Tráng 2", cells2["toc_do"], t2["toc_do_may"])
         _set(xp, "Tráng 2", cells2["dun_keo"], t2["dun_keo"])
         _set(xp, "Tráng 2", cells2["khuon"], t2["khuon"])
+        # Tỷ lệ vật liệu (cột E): OPP E21=F801C/E22=Taical/E23=Hạt màu; KP E22=F801C/E23=Taical
+        if bao_type == "BOPP":
+            _set(xp, "Tráng 2", "E21", t2["f801c_share"])
+            _set(xp, "Tráng 2", "E22", t2["taical_share"])
+            _set(xp, "Tráng 2", "E23", t2["hat_mau_share"])
+        else:
+            _set(xp, "Tráng 2", "E22", t2["f801c_share"])
+            _set(xp, "Tráng 2", "E23", t2["taical_share"])
 
     # --- Dán 2 ---
     if present("Dán 2"):
@@ -964,6 +998,24 @@ def fill_dinh_muc(template_path, family, fields, so_mau_in, out_path):
         _set(xp, "Thổi 2", cells["khoi_luong"], t2["khoi_luong_g"])
         _set(xp, "Thổi 2", cells["dun_keo"], t2.get("dun_keo"))
         _set(xp, "Thổi 2", cells["keo_bong"], t2.get("keo_bong"))
+        # Tỷ lệ vật liệu (cột E): LDPE / Taical EFPE (rin = 100% LDPE, không taical)
+        _set(xp, "Thổi 2", "E18", t2.get("ldpe_share"))
+        _set(xp, "Thổi 2", "E19", t2.get("taical_share"))
+
+    # --- Đóng gói 1 & 2 (Lệnh SX + Nhật ký SX) ---
+    for sn in ("Đóng gói 1", "Đóng gói 2"):
+        if not present(sn):
+            continue
+        for region in ("header", "stage"):
+            for ref, field in cm.get(sn, {}).get(region, {}).items():
+                if ref.startswith("_"):
+                    continue
+                _set(xp, sn, ref, fields.get(field))
+        if sn == "Đóng gói 2" and not fields.get("bao_kien_text"):
+            _blank(xp, sn, "C32")
+        # xóa dữ liệu đơn hàng cũ sót lại trong template
+        for ref in ("V5", "W5", "X5"):
+            _blank(xp, sn, ref)
 
     # --- Sheet X + hidden sheets ---
     if not has_print and present("X"):
