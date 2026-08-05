@@ -185,7 +185,7 @@ img{max-width:100%}
   <header class="site-header">
     <div class="site-header__inner">
       <a class="brand" href="/" aria-label="Ecolar — trang chủ">
-        <img class="brand__logo" src="data:image/png;base64,{{LOGO_B64}}" alt="Ecolar" height="110" width="299">
+        <img class="brand__logo" src="data:image/png;base64,{{LOGO_B64}}" alt="Ecolar" height="132" width="195">
         <p class="brand__tagline">LỜI SỐNG XANH <span class="tagline__dot" aria-hidden="true">•</span> BỀN VỮNG</p>
       </a>
     </div>
