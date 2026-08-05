@@ -78,9 +78,9 @@ img{max-width:100%}
 
 /* HEADER */
 .site-header{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.82);backdrop-filter:blur(10px) saturate(140%);-webkit-backdrop-filter:blur(10px) saturate(140%);border-bottom:1px solid var(--border)}
-.site-header__inner{display:flex;align-items:center;height:68px;padding-inline:clamp(20px,4vw,40px)}
-.brand{display:flex;flex-direction:column;gap:2px;text-decoration:none}
-.brand__logo{height:44px;width:auto;display:block}
+.site-header__inner{display:flex;align-items:center;min-height:132px;padding:16px 0;padding-inline:clamp(20px,4vw,40px)}
+.brand{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-decoration:none}
+.brand__logo{height:120px;width:auto;display:block}
 .brand__tagline{margin:0;font-size:11px;line-height:16px;font-weight:600;text-transform:uppercase;letter-spacing:.12em;color:var(--text-muted)}
 .tagline__dot{display:inline-block;color:var(--honey);margin:0 2px;transform:translateY(-1px)}
 
@@ -168,7 +168,7 @@ img{max-width:100%}
   .container{padding-inline:16px}
   .card{padding:20px}
   .steps__list{grid-template-columns:1fr!important}
-  .brand__logo{height:36px}
+  .brand__logo{height:88px}
 }
 
 /* REDUCED MOTION */
@@ -185,7 +185,7 @@ img{max-width:100%}
   <header class="site-header">
     <div class="site-header__inner">
       <a class="brand" href="/" aria-label="Ecolar — trang chủ">
-        <img class="brand__logo" src="data:image/png;base64,{{LOGO_B64}}" alt="Ecolar" height="132" width="195">
+        <img class="brand__logo" src="data:image/png;base64,{{LOGO_B64}}" alt="Ecolar" height="813" width="1200">
         <p class="brand__tagline">LỜI SỐNG XANH <span class="tagline__dot" aria-hidden="true">•</span> BỀN VỮNG</p>
       </a>
     </div>
