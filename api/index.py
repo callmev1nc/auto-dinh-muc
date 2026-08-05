@@ -77,7 +77,7 @@ img{max-width:100%}
 .skip-link:focus{top:8px;box-shadow:var(--ring-focus)}
 
 /* HEADER */
-.site-header{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.82);backdrop-filter:blur(10px) saturate(140%);-webkit-backdrop-filter:blur(10px) saturate(140%);border-bottom:1px solid var(--border)}
+.site-header{position:static;background:rgba(255,255,255,.82);backdrop-filter:blur(10px) saturate(140%);-webkit-backdrop-filter:blur(10px) saturate(140%);border-bottom:1px solid var(--border)}
 .site-header__inner{display:flex;align-items:center;min-height:132px;padding:16px 0;padding-inline:clamp(20px,4vw,40px)}
 .brand{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-decoration:none}
 .brand__logo{height:120px;width:auto;display:block}
