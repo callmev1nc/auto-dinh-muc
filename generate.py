@@ -53,7 +53,6 @@ def load_json(name):
 
 CONST = load_json("constants.json")
 CELLMAP = load_json("cell_map.json")
-INK = load_json("ink_master.json")
 RULES = load_json("customer_rules.json")
 BAG = load_json("bag_type_map.json")
 DIMS = load_json("standard_dims.json")
@@ -187,6 +186,11 @@ def parse_ycsx(path):
             f"Excel, hãy copy → paste-as-value trước khi upload."
         )
     order["products"] = products
+    # layout anchor used to re-fill the SAME file when the input is a YCSX
+    order["ycsx_header_row"] = header_row
+    order["ycsx_cols"] = {
+        "code": code_col, "name": name_col, "ma": ma_col, "spec": spec_col, "qty": qty_col,
+    }
 
     # top-level single-product fields = first product (backward compat)
     p0 = products[0]
@@ -240,7 +244,10 @@ def _parse_tui_long(spec):
     if m_loai:
         loai = m_loai.group(1).strip().lower()
     out["tui_long_loai"] = "rin" if loai == "rin" else "thường"
-    m_dim = re.search(r"(\d+)\s*x\s*(\d+)\s*cm", spec)
+    m_dim = re.search(r"(\d+)\s*x\s*(\d+)\s*cm", spec, re.IGNORECASE)
+    if not m_dim:
+        # nhiều YCSX ghi thiếu đơn vị: "túi PE rin 50x92 (20gr) (LTMS)"
+        m_dim = re.search(r"(\d{2,3})\s*x\s*(\d{2,3})\s*[( ]", spec)
     if m_dim:
         out["tui_long_rong_cm"] = int(m_dim.group(1))
         out["tui_long_dai_cm"] = int(m_dim.group(2))
@@ -782,6 +789,14 @@ def _blank(xp, sheet, ref):
     xp.set_value(sheet, ref, None)
 
 
+def _clear_ink_rows(xp, start, end):
+    """Mực in được công đoạn In điền thủ công theo thiết kế — xóa hết dòng mực
+    (tên/mã/STT/ĐVT/số lượng) để sheet In không còn tên mực leftover từ template."""
+    for r in range(start, end + 1):
+        for col in "BCDFG":
+            _blank(xp, "In", f"{col}{r}")
+
+
 def fill_dinh_muc(template_path, family, fields, so_mau_in, out_path):
     xp = XlsxPatch(template_path)
     cm = CELLMAP["dinh_muc"]
@@ -808,39 +823,22 @@ def fill_dinh_muc(template_path, family, fields, so_mau_in, out_path):
             _set(xp, "In", "G19", fields.get("sl_in_thuc_te_m"))
             _set(xp, "In", "G20", fields.get("dung_moai_opp_kg"))
             _set(xp, "In", "G21", fields.get("dung_moai_ea_kg"))
-            inks = INK["opp"]
-            for i in range(5):  # rows 22-26
-                r = 22 + i
-                xp.set_value("In", f"G{r}", "")
-                if i < fields["so_mau_in"]:
-                    _set(xp, "In", f"C{r}", inks[i]["name"])
-                    _set(xp, "In", f"D{r}", inks[i]["code"])
-                    _set(xp, "In", f"B{r}", 4 + i)
-                    _set(xp, "In", f"F{r}", "Kg")
-                else:
-                    xp.set_value("In", f"C{r}", ""); xp.set_value("In", f"D{r}", "")
+            _clear_ink_rows(xp, 22, 28)
         else:
             _set(xp, "In", "C18", fields.get("giay_ten") or fields.get("kraft_name"))
             _set(xp, "In", "D18", fields.get("giay_kraft_code"))
             _set(xp, "In", "F18", "Kg")
             _set(xp, "In", "G18", fields.get("giay_kraft_kg"))
             _set(xp, "In", "G19", fields.get("sl_in_thuc_te_m"))
-            inks = INK["flexo"]
-            for i in range(4):  # rows 20-23
-                r = 20 + i
-                xp.set_value("In", f"G{r}", "")
-                if i < fields["so_mau_in"]:
-                    _set(xp, "In", f"C{r}", inks[i]["name"])
-                    _set(xp, "In", f"D{r}", inks[i]["code"])
-                    _set(xp, "In", f"B{r}", 2 + i)
-                    _set(xp, "In", f"F{r}", "Kg")
-                else:
-                    xp.set_value("In", f"C{r}", ""); xp.set_value("In", f"D{r}", "")
+            _clear_ink_rows(xp, 20, 23)
     else:
         # không in: blank leftover G formulas so the (hidden) sheet carries no stale data
         if bao_type == "BOPP":
             for ref in ("G18", "G19", "G20", "G21"):
                 xp.set_value("In", ref, None)
+            _clear_ink_rows(xp, 22, 28)
+        else:
+            _clear_ink_rows(xp, 20, 23)
 
     # --- In 2 (materials mirror) ---
     if has_print and present("In 2"):
@@ -991,11 +989,11 @@ def fill_dinh_muc(template_path, family, fields, so_mau_in, out_path):
                  "BOPP": {"rong": "D45", "dai": "D46", "day": "D47", "do_day": "D48",
                           "khoi_luong": "D49", "dun_keo": "D39", "keo_bong": "D40"}}[bao_type]
         if "rong_mm" in t2:
-            _set(xp, "Thổi 2", cells["rong"], t2["rong_mm"])
-            _set(xp, "Thổi 2", cells["dai"], t2["dai_mm"])
+            _set(xp, "Thổi 2", cells["rong"], f"{t2['rong_mm']} ± 10")
+            _set(xp, "Thổi 2", cells["dai"], f"{t2['dai_mm']} ± 10")
             _set(xp, "Thổi 2", cells["day"], t2.get("day"))
-            _set(xp, "Thổi 2", cells["do_day"], t2["do_day"])
-        _set(xp, "Thổi 2", cells["khoi_luong"], t2["khoi_luong_g"])
+            _set(xp, "Thổi 2", cells["do_day"], f"{t2['do_day']} ± 1")
+        _set(xp, "Thổi 2", cells["khoi_luong"], f"{t2['khoi_luong_g']} ± 1")
         _set(xp, "Thổi 2", cells["dun_keo"], t2.get("dun_keo"))
         _set(xp, "Thổi 2", cells["keo_bong"], t2.get("keo_bong"))
         # Tỷ lệ vật liệu (cột E): LDPE / Taical EFPE (rin = 100% LDPE, không taical)
@@ -1056,8 +1054,15 @@ def _per_product_order(order, product):
     return po
 
 
-def fill_ycsx(template_path, order, out_path):
+def fill_ycsx(src_path, order, out_path, preserve=False):
     """Fill the YCSX form: header (label + value) + ALL product line items.
+
+    preserve=True — the input IS a YCSX file (clone-and-fill): the source
+    workbook stays intact apart from the header block and the parsed product
+    lines, so mã code, mã khách hàng, giao-hàng notes and the per-stage quality
+    block (MÀNH/IN/TRÁNG/DÁN/THỔI/MAY) are never deleted.
+    preserve=False — no input YCSX (order JSON / sample, generic template):
+    the stale product region is cleared so leftovers can't leak into the output.
 
     Stale template data (leftover products, stage markers, old header values,
     old giao-hàng/notes) is cleared so output never leaks a previous order. The
@@ -1069,7 +1074,7 @@ def fill_ycsx(template_path, order, out_path):
     spec cell (it's inside the merge). set_value returns False for those
     cells — the spec is still fully detailed in each product's Định mức file.
     """
-    xp = XlsxPatch(template_path)
+    xp = XlsxPatch(src_path)
     cm = CELLMAP["ycsx"]
     sheet = list(xp.sheet_paths)[0]
 
@@ -1084,36 +1089,45 @@ def fill_ycsx(template_path, order, out_path):
         val = order.get(hfields.get(ref, ""), "") or ""
         xp.set_value(sheet, ref, f"{label}: {val}".rstrip())
 
-    # product line items from row 13
+    # product line items below the (parsed) header row
     products = order.get("products") or [_single_product(order)]
-    last_data_row = 12
+    ycsx_cols = order.get("ycsx_cols", {})
+    base_row = int(order.get("ycsx_header_row") or 12)
+    start_row = base_row + 1
+    col_code = ycsx_cols.get("code", "C")
+    col_name = ycsx_cols.get("name", "D")
+    col_ma = ycsx_cols.get("ma", "E")
+    col_spec = ycsx_cols.get("spec", "F")
+    col_qty = ycsx_cols.get("qty", "J")
+
+    last_data_row = base_row
     for i, p in enumerate(products):
-        r = 13 + i
+        r = start_row + i
         xp.set_value(sheet, f"B{r}", i + 1)
-        xp.set_value(sheet, f"C{r}", p.get("product_code", ""))
-        xp.set_value(sheet, f"D{r}", p.get("product_name", ""))
-        # E{r} (ma_code) and F{r} (spec) may not exist as individual <c>
-        # elements when r > 13 (inside F13:H15 merge). set_value returns
-        # False in that case — harmless because detailed specs live in each
-        # product's Định mức output file.
-        xp.set_value(sheet, f"E{r}", p.get("ma_code", ""))
-        xp.set_value(sheet, f"F{r}", p.get("spec", ""))
+        xp.set_value(sheet, f"{col_code}{r}", p.get("product_code", ""))
+        xp.set_value(sheet, f"{col_name}{r}", p.get("product_name", ""))
+        # ma_code/spec cells may not exist as individual <c> elements when r is
+        # inside a merged range (e.g. F13:H15). set_value returns False then —
+        # harmless because detailed specs live in each product's Định mức file.
+        xp.set_value(sheet, f"{col_ma}{r}", p.get("ma_code", ""))
+        xp.set_value(sheet, f"{col_spec}{r}", p.get("spec", ""))
         xp.set_value(sheet, f"I{r}", "Cái")
-        xp.set_value(sheet, f"J{r}", p.get("qty", ""))
+        xp.set_value(sheet, f"{col_qty}{r}", p.get("qty", ""))
         last_data_row = r
 
-    # clear stale notes/schedule (K,L) across the whole product region, then
-    # clear B-J beyond the products written (leftover products + stage markers
-    # at 16-21 + giao-hàng at 23). Merged top-lefts (e.g. B23) clear on contact.
-    # Cells inside a merge range (e.g. F14 inside F13:H15) don't exist as
-    # individual <c> elements — set_value returns False for those, which is
-    # harmless (no stale data can live in a non-existent cell).
-    for r in range(13, 24):
-        xp.set_value(sheet, f"K{r}", "")
-        xp.set_value(sheet, f"L{r}", "")
-    for r in range(last_data_row + 1, 24):
-        for col in "BCDEFGHIJ":
-            xp.set_value(sheet, f"{col}{r}", "")
+    if not preserve:
+        # generic template: clear stale notes/schedule (K,L) across the whole
+        # product region, then clear B-J beyond the products written (leftover
+        # products + stage markers at 16-21 + giao-hàng at 23). Merged
+        # top-lefts (e.g. B23) clear on contact. Cells inside a merge range
+        # don't exist as individual <c> elements — set_value returns False for
+        # those, which is harmless (no stale data can live in a non-existent cell).
+        for r in range(start_row, 24):
+            xp.set_value(sheet, f"K{r}", "")
+            xp.set_value(sheet, f"L{r}", "")
+        for r in range(last_data_row + 1, 24):
+            for col in "BCDEFGHIJ":
+                xp.set_value(sheet, f"{col}{r}", "")
 
     xp.save(out_path)
     return out_path
@@ -1173,8 +1187,11 @@ def run(source, colors, outdir=None):
 
     ycsx_safe = re.sub(r"[^0-9A-Za-z]+", "-",
                        order.get("product_name") or products[0].get("product_name") or "order")[:40]
+    # YCSX: khi input là chính file YCSX thì clone file gốc (giữ mã code/mã
+    # khách hàng/chất lượng yêu cầu các công đoạn); JSON/sample dùng template.
     ycsx_out = os.path.join(outdir, f"YCSX - {ycsx_safe} - {order.get('order_id','')}.xlsx")
-    fill_ycsx(template_path("ycsx"), order, ycsx_out)
+    ycsx_base = source[1] if kind == "ycsx" else template_path("ycsx")
+    fill_ycsx(ycsx_base, order, ycsx_out, preserve=kind == "ycsx")
     outputs.append(ycsx_out)
 
     zip_path = os.path.join(outdir, f"Dinh_muc_YCSX_{order.get('order_id','order')}.zip")

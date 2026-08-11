@@ -177,6 +177,14 @@ class Test25KgKp:
             v = _num(self.ws, f"G{r}")
             assert v is None or v == 0, f"In!G{r}={v} should be blank"
 
+    def test_no_ink_rows(self):
+        # Mực là vật tư điền thủ công theo thiết kế — sheet In không được còn tên/mã mực
+        for r in range(20, 24):
+            assert _str(self.ws, f"C{r}") == "", \
+                f"In!C{r} không được chứa tên mực: {_str(self.ws, f'C{r}')!r}"
+            assert _str(self.ws, f"D{r}") == "", \
+                f"In!D{r} không được chứa mã mực: {_str(self.ws, f'D{r}')!r}"
+
 
 class Test40KgOpp:
     """OPP 40kg 4 Oranges -- 3 mau in."""
@@ -241,7 +249,7 @@ class Test40KgOpp:
 
     def test_thoi2_filled(self):
         ws = self.wb["Thổi 2"]
-        assert _num(ws, "D49") == 51, f"Thổi 2!D49={_num(ws, 'D49')}"
+        assert _str(ws, "D49") == "51 ± 1", f"Thổi 2!D49={_str(ws, 'D49')!r}"
 
     def test_trang2_4oranges_ratios(self):
         ws = self.wb["Tráng 2"]
@@ -270,9 +278,17 @@ class Test40KgOpp:
         _check_no_solid_fill(self.ws, all_cells, "In")
 
     def test_ink_kg_blank(self):
-        for r in range(22, 27):
+        for r in range(22, 29):
             v = _num(self.ws, f"G{r}")
             assert v is None or v == 0, f"In!G{r}={v} should be blank"
+
+    def test_no_ink_rows(self):
+        # Mực là vật tư điền thủ công theo thiết kế — sheet In không được còn tên/mã mực
+        for r in range(22, 29):
+            assert _str(self.ws, f"C{r}") == "", \
+                f"In!C{r} không được chứa tên mực: {_str(self.ws, f'C{r}')!r}"
+            assert _str(self.ws, f"D{r}") == "", \
+                f"In!D{r} không được chứa mã mực: {_str(self.ws, f'D{r}')!r}"
 
 
 class TestNormal40KgOpp:
@@ -309,6 +325,14 @@ class TestNormal40KgOpp:
         ws = self.wb["Thổi 2"]
         assert abs(_num(ws, "E18") - 1.0) < 1e-9, f"Thổi 2!E18={_num(ws, 'E18')}"
         assert abs(_num(ws, "E19") - 0.0) < 1e-9, f"Thổi 2!E19={_num(ws, 'E19')}"
+
+    def test_thoi2_dims_tolerance(self):
+        # túi lồng rin 50x92cm 20gr → dung sai: rộng/dài ±10, độ dày/khối lượng ±1
+        ws = self.wb["Thổi 2"]
+        assert _str(ws, "D45") == "500 ± 10", f"Thổi 2!D45={_str(ws, 'D45')!r}"
+        assert _str(ws, "D46") == "920 ± 10", f"Thổi 2!D46={_str(ws, 'D46')!r}"
+        assert _str(ws, "D48") == "23 ± 1", f"Thổi 2!D48={_str(ws, 'D48')!r}"
+        assert _str(ws, "D49") == "20 ± 1", f"Thổi 2!D49={_str(ws, 'D49')!r}"
 
     def test_thoi_sheet_rin_quantities(self):
         ws = self.wb["Thổi"]
@@ -547,3 +571,45 @@ class TestInputParsing:
         assert products[0].get("qty") == 5000, f"qty={products[0].get('qty')}"
         assert order.get("inner_bag_weight_kg") == 0.05, \
             f"ibw={order.get('inner_bag_weight_kg')}"
+
+
+class TestYcsxPreserve:
+    """YCSX output must be cloned from the input YCSX — mã code, mã khách hàng,
+    và khối "chất lượng yêu cầu" các công đoạn (MÀNH/IN/TRÁNG/DÁN/THỔI/MAY) được
+    giữ nguyên. Regression: trước đây fill_ycsx xóa sạch dòng 14–23 của template."""
+
+    @classmethod
+    def setup_class(cls):
+        ycsx_path = os.path.join(HERE, "..", "samples", "YCSX_4oranges.xlsx")
+        if not os.path.isfile(ycsx_path):
+            import pytest
+            pytest.skip("YCSX_4oranges.xlsx not found")
+        outdir = tempfile.mkdtemp(prefix="ycsx_preserve_")
+        run(("ycsx", ycsx_path), 3, outdir=outdir)
+        ycsx_files = [os.path.join(outdir, f) for f in os.listdir(outdir)
+                      if f.endswith(".xlsx") and f.startswith("YCSX")]
+        assert ycsx_files, f"no YCSX output in {os.listdir(outdir)}"
+        wb = load_workbook(ycsx_files[0], data_only=True)
+        cls.ws = wb[wb.sheetnames[0]]
+        wb.close()
+
+    def test_customer_code_preserved(self):
+        assert "Mã khách hàng: KH00565" in _str(self.ws, "B9"), \
+            f"B9={_str(self.ws, 'B9')!r}"
+
+    def test_ma_code_preserved(self):
+        assert _str(self.ws, "E13") == "M4-13-2603-13", f"E13={_str(self.ws, 'E13')!r}"
+
+    def test_stage_quality_block_preserved(self):
+        stages = [_str(self.ws, f"C{r}") for r in range(16, 22)]
+        assert stages == ["MÀNH", "IN", "TRÁNG", "DÁN", "THỔI", "MAY"], \
+            f"stages={stages}"
+        assert _str(self.ws, "D16") == "A : CLRC", f"D16={_str(self.ws, 'D16')!r}"
+
+    def test_product_rows_refreshed(self):
+        assert _str(self.ws, "C13") == "XD1KH00565BP0001", f"C13={_str(self.ws, 'C13')!r}"
+        assert _str(self.ws, "J13") == "5000", f"J13={_str(self.ws, 'J13')!r}"
+        assert _str(self.ws, "C14") == "XD1KH00565BP0004", f"C14={_str(self.ws, 'C14')!r}"
+
+    def test_delivery_note_preserved(self):
+        assert "Long An" in _str(self.ws, "B23"), f"B23={_str(self.ws, 'B23')!r}"
