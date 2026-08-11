@@ -1,0 +1,47 @@
+{
+  "_comment": "Column mapping order-json <-> Base Workflow 'QUẢN LÝ ĐƠN HÀNG SẢN XUẤT' (id 1318). CONFIRMED live: the workflow has only 2 custom fields — so_phieu_ycsx (Số phiếu YCSX = order id, text) and thong_tin_nhap_hang (input-table). There are NO order columns and NO result columns; order data comes from the YCSX .xlsx attached to each job (downloadable via job/form -> files). Write-back to result columns is Phase 2: admin must add the result columns to the workflow, and the token needs edit rights (job/edit currently returns HTTP 500 with this token).",
+  "confirmed": true,
+  "workflow_id": 1318,
+  "workflow_name": "QUẢN LÝ ĐƠN HÀNG SẢN XUẤT",
+  "stages": {
+    "entry": 8277,
+    "entry_name": "Thông tin đơn hàng",
+    "trigger": 8278,
+    "trigger_name": "Lập định mức NVL",
+    "failed": 8276
+  },
+  "source": {
+    "type": "ycsx_attachment",
+    "field": "so_phieu_ycsx",
+    "field_name": "Số phiếu YCSX",
+    "webhook_key": "custom_so_phieu_ycsx"
+  },
+  "trigger": {
+    "call_dinh_muc_nvl": "custom_call_dinh_muc_nvl",
+    "trigger_value": "1"
+  },
+  "order_columns": {
+    "customer": "custom_khach_hang",
+    "product_name": "custom_ten_san_pham",
+    "product_code": "custom_ma_san_pham",
+    "order_id": "custom_so_phieu_ycsx",
+    "so_phieu_sx": "custom_so_phieu_sx",
+    "qty": "custom_so_luong",
+    "bag_length_m": "custom_chieu_dai_m",
+    "width_plus_gusset_m": "custom_chieu_rong_cong_hong_m",
+    "width_cm": "custom_chieu_rong_cm",
+    "gusset_cm": "custom_hong_cm",
+    "inner_bag_weight_kg": "custom_trong_luong_tui_pe_kg",
+    "kho_mang": "custom_kho_mang",
+    "spec": "custom_yeu_cau_ky_thuat"
+  },
+  "result_columns": {
+    "family": "custom_loai_bao",
+    "mang_bopp_kg": "custom_mang_bopp_kg",
+    "dung_moai_opp_kg": "custom_dung_moai_opp_kg",
+    "giay_kraft_kg": "custom_giay_kraft_kg",
+    "bao_kien": "custom_so_bao_kien",
+    "status": "custom_trang_thai",
+    "error": "custom_loi"
+  }
+}

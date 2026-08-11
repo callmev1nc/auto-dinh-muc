@@ -7,6 +7,9 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)  # so the sibling _logo_data module is importable
 
 import generate
+import base_columns
+import base_vn
+import dinh_muc_service
 import _logo_data  # LOGO_B64 — base64 of logo.png, bundled alongside this function
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
@@ -380,3 +383,143 @@ async def generate_endpoint(
     except Exception as e:
         shutil.rmtree(tmp, ignore_errors=True)
         raise HTTPException(500, traceback.format_exc())
+
+
+# ---------------------------------------------------------------- Base.vn integration
+def _job_id_from_payload(payload: dict):
+    for container in (payload.get("data") if isinstance(payload.get("data"), dict) else {}, payload):
+        for key in ("id", "job_id", "task_id"):
+            value = container.get(key)
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def _colors_from_payload(payload: dict):
+    for key in ("colors", "so_mau_in", "so_mau", "custom_so_mau_in"):
+        src = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        value = payload.get(key, src.get(key))
+        if value not in (None, ""):
+            try:
+                return int(str(value).strip())
+            except (TypeError, ValueError):
+                break
+    default = os.environ.get("BASE_DEFAULT_COLORS", "3")
+    try:
+        return int(default)
+    except ValueError:
+        return 3
+
+
+def _ycsx_url_from_payload(payload: dict):
+    src = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    for key in ("ycsx_url", "file_url", "ycsx", "custom_ycsx_url"):
+        for container in (src, payload):
+            value = container.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return None
+
+
+def _ycsx_url_from_job(job: dict):
+    """Pick the attached .xls/.xlsx (the YCSX file) from a fetched job."""
+    job_obj = job.get("job") or job.get("data") or job
+    for f in (job_obj.get("files") or []):
+        if isinstance(f, dict):
+            name = str(f.get("name") or "").lower()
+            if f.get("url") and (name.endswith(".xls") or name.endswith(".xlsx")):
+                return f["url"]
+    return None
+
+
+@app.post("/api/wf/receive", status_code=200)
+async def wf_receive(request: Request):
+    """Base Workflow webhook receiver (auto-execute).
+
+    Body: the workflow's webhook output vars (flat, or job nested under
+    ``data``). Resolution order for the order data:
+
+    1. Attached YCSX file (payload ``ycsx_url``/``file_url`` or fetched from
+       the job via ``job/get``) -> parsed with generate.parse_ycsx (accurate).
+    2. Mapped order columns (``custom_*``) -> order dict path.
+    """
+    try:
+        raw = await request.body()
+        payload = json.loads(raw.decode("utf-8") or "{}")
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(400, "Body phai la JSON hop le")
+
+    job_id = _job_id_from_payload(payload)
+    colors = _colors_from_payload(payload)
+    tmp = tempfile.mkdtemp()
+    client = base_vn.BaseVnClient()
+
+    ycsx_url = _ycsx_url_from_payload(payload)
+    fetched_job = None
+    job_get = getattr(client, "get_job", None)
+    if not ycsx_url and job_id and job_get is not None:
+        try:
+            fetched_job = job_get(job_id)
+        except base_vn.BaseVnError:
+            fetched_job = None
+        if fetched_job:
+            ycsx_url = _ycsx_url_from_job(fetched_job)
+            if isinstance(fetched_job, dict):
+                job_obj = fetched_job.get("job") or fetched_job.get("data") or {}
+                merged = {k: v for k, v in job_obj.items() if not isinstance(v, dict)}
+                payload = {**payload, **merged}
+
+    try:
+        if ycsx_url:
+            local = client.download_file(ycsx_url, os.path.join(tmp, "ycsx.xlsx"))
+            result = generate.run(("ycsx", local), colors, outdir=os.path.join(tmp, "out"))
+            summary = dinh_muc_service.compute_summary(result)
+        else:
+            order = base_columns.order_from_webhook(payload)
+            wrapped = dinh_muc_service.run_and_summarize(order, colors, outdir=os.path.join(tmp, "out"))
+            summary = wrapped["summary"]
+    except generate.InputValidationError as e:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise HTTPException(400, str(e))
+    except Exception:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise HTTPException(500, traceback.format_exc())
+
+    result_fields = base_columns.result_fields(
+        dinh_muc_service.write_result_fields(summary))
+    written_back = False
+    if job_id:
+        try:
+            client.update_job(job_id, **result_fields)
+            written_back = True
+        except base_vn.BaseVnError as e:
+            summary["error"] = f"write-back failed: {e}"
+
+    moved_next = False
+    auto_move = os.environ.get("BASE_AUTO_MOVE_NEXT", "0") == "1"
+    if job_id and auto_move and summary.get("status") == "done":
+        try:
+            client.move_next(job_id)
+            moved_next = True
+        except base_vn.BaseVnError as e:
+            summary.setdefault("warning", f"move-next failed: {e}")
+
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "colors": colors,
+        "ycsx_used": bool(ycsx_url),
+        "summary": summary,
+        "written_back": written_back,
+        "moved_next": moved_next,
+    }
+
+
+@app.post("/api/wf/discover")
+async def wf_discover():
+    """Read-only probe of the workspace: workflows + their stages."""
+    try:
+        data = base_vn.BaseVnClient().discover()
+    except base_vn.BaseVnError as e:
+        raise HTTPException(400, str(e))
+    return data

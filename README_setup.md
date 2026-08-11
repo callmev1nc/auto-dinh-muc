@@ -81,6 +81,20 @@ All coefficients live in `data/constants.json`:
 - `dung_sai_default` (5%), định lượng mành/giấy, ratios — adjust per your records.
 Add a new customer exception in `data/customer_rules.json`.
 
+# Base.vn integration
+- **Files:** `base_vn.py` (Workflow/Wework API client), `base_columns.py` (cột <-> đơn
+  hàng mapping), `dinh_muc_service.py` (generate + summary), `gui_don_vn.py` /
+  `gui_don_vn.bat` (1-click: tạo file + gửi lên Base), `api/index.py`
+  (`POST /api/wf/receive` receiver + `POST /api/wf/discover`).
+- **Env vars** (trong `.env.local`, không commit — đã gitignore `.env*`):
+  `BASE_WORKFLOW_TOKEN`, `BASE_WEWORK_TOKEN`, `BASE_WEBHOOK_CREATE_URL`.
+- **Column mapping:** `data/base_columns.json`. `"confirmed": false` = đang dùng key
+  đoán; chạy `python gui_don_vn.py --discover` để xác nhận key `custom_*` thật rồi
+  sửa file (hoặc dán từ giao diện "API tạo" của workflow).
+- **Auto flow (Phase 2):** trong Base Workflow, đặt automation "khi nhiệm vụ mới có
+  cột thông tin đơn hàng → gọi `POST /api/wf/receive`" (webhook output). Receiver
+  parse đơn, chạy `generate.py`, ghi kết quả ngược về cột kết quả qua `job/edit`.
+
 ## Verification (regression-passing)
 - OPP sample: sl_in=2983, màng BOPP=49.1407, dung môi OPP=12.5286/EA=5.3694.
 - Paper sample: sl_in=4600, giấy kraft=328.44, glue=15.2444 (9415 rule).
