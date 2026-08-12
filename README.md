@@ -52,6 +52,28 @@ README_setup.md               full setup + daily-use guide
 
 See **[README_setup.md](README_setup.md)** for detailed setup and tuning.
 
+## Web app (FastAPI + Vercel)
+- `GET /` — the classic one-shot form: upload order → pick "số màu in" → download ZIP.
+- `GET /board` — **Định mức review board** (standalone, Supabase-backed, no Base.vn):
+  import an order → it lands in *Thông tin đơn hàng* → kế toán opens the detail,
+  verifies the computed BOM → **Duyệt** (one-click, locks into *Lập định mức NVL*)
+  or **Trả lại** with a reason → ZIP downloadable at any time via "Tải ZIP định mức".
+
+### Run locally
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+uvicorn api.index:app --reload     # from this dir; open http://127.0.0.1:8000/board
+```
+Without Supabase env vars the board falls back to a local JSON store
+(`.board_db/orders.json`) so it works out of the box for a demo.
+
+### Supabase (production persistence)
+1. Run `supabase/schema.sql` in the Supabase SQL editor (creates `dinh_muc_orders`).
+2. Set Vercel env vars: `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
+
+Identity on the board is lightweight (name kept in a cookie); full Supabase Auth is a
+noted future upgrade.
+
 ## Verification (regression-passing)
 - OPP sample: sl_in=2983, màng BOPP=49.1407, dung môi OPP=12.5286/EA=5.3694.
 - Paper sample: sl_in=4600, giấy kraft=328.44, glue=15.2444 (9415 rule).

@@ -1,5 +1,6 @@
 import os, sys, json, tempfile, traceback, shutil, base64
 from pathlib import Path
+from urllib.parse import quote
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -10,10 +11,12 @@ import generate
 import base_columns
 import base_vn
 import dinh_muc_service
+import db
+import pages
 import _logo_data  # LOGO_B64 — base64 of logo.png, bundled alongside this function
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, RedirectResponse
 from starlette.background import BackgroundTask
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -82,6 +85,9 @@ img{max-width:100%}
 /* HEADER */
 .site-header{position:static;background:rgba(255,255,255,.82);backdrop-filter:blur(10px) saturate(140%);-webkit-backdrop-filter:blur(10px) saturate(140%);border-bottom:1px solid var(--border)}
 .site-header__inner{display:flex;align-items:center;min-height:132px;padding:16px 0;padding-inline:clamp(20px,4vw,40px)}
+.site-nav{margin-left:auto;display:flex;gap:8px;align-items:center}
+.site-nav a{font-size:13px;line-height:18px;font-weight:600;color:var(--text-accent);text-decoration:none;border:1px solid var(--border);background:var(--surface);padding:8px 14px;border-radius:999px;transition:background var(--dur) var(--ease),border-color var(--dur) var(--ease)}
+.site-nav a:hover,.site-nav a.is-active{background:var(--primary-soft);border-color:var(--primary)}
 .brand{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-decoration:none}
 .brand__logo{height:120px;width:auto;display:block}
 .brand__tagline{margin:0;font-size:11px;line-height:16px;font-weight:600;text-transform:uppercase;letter-spacing:.12em;color:var(--text-muted)}
@@ -191,6 +197,10 @@ img{max-width:100%}
         <img class="brand__logo" src="data:image/png;base64,{{LOGO_B64}}" alt="Ecolar" height="813" width="1200">
         <p class="brand__tagline">LỜI SỐNG XANH <span class="tagline__dot" aria-hidden="true">•</span> BỀN VỮNG</p>
       </a>
+      <nav class="site-nav" aria-label="Điều hướng">
+        <a href="/">Tạo Định mức</a>
+        <a href="/board">Bảng đơn hàng</a>
+      </nav>
     </div>
   </header>
 
@@ -380,6 +390,179 @@ async def generate_endpoint(
     except generate.InputValidationError as e:
         shutil.rmtree(tmp, ignore_errors=True)
         raise HTTPException(400, str(e))
+    except Exception as e:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise HTTPException(500, traceback.format_exc())
+
+
+# ----------------------------------------------------------- Định mức review board
+def _reviewer_name(request: Request, submitted: str = "") -> str:
+    """Identity is lightweight (demo-grade): name from the form field, else the
+    cookie set on the board, else a neutral default. Full Supabase Auth is a
+    noted future upgrade."""
+    name = submitted.strip()
+    if not name:
+        name = request.cookies.get(pages.CURRENT_REVIEWER_COOKIE, "").strip()
+    return name or "Người duyệt"
+
+
+def _set_reviewer_cookie(response: RedirectResponse, name: str) -> None:
+    # URL-encode: cookie values must stay latin-1-safe (names may be Vietnamese).
+    response.set_cookie(
+        pages.CURRENT_REVIEWER_COOKIE, quote(name, safe=""), max_age=365 * 24 * 3600,
+        httponly=False, samesite="lax")
+
+
+def _load_order_or_404(order_id: str) -> dict:
+    row = db.get_store().get_order(order_id)
+    if row is None:
+        raise HTTPException(404, "Không tìm thấy đơn hàng")
+    return row
+
+
+@app.get("/board", response_class=HTMLResponse)
+async def board_page():
+    orders = db.get_store().list_orders()
+    return pages.board_page(orders)
+
+
+@app.post("/orders")
+async def orders_create(file: UploadFile = File(...),
+                        colors: int = Form(...),
+                        reviewer: str = Form("")):
+    """Import: upload .json/.xlsx → parse → compute BOM → persist as a board card."""
+    if colors < 0:
+        raise HTTPException(400, "Số màu in không được âm")
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in (".json", ".xlsx"):
+        raise HTTPException(400, f"Unsupported file type: {suffix}")
+
+    tmp = tempfile.mkdtemp()
+    try:
+        tmp_path = os.path.join(tmp, file.filename)
+        with open(tmp_path, "wb") as f:
+            f.write(await file.read())
+
+        if suffix == ".xlsx":
+            order = generate.parse_ycsx(tmp_path)
+        else:
+            with open(tmp_path, encoding="utf-8") as f:
+                order = json.load(f)
+            if not isinstance(order, dict):
+                raise generate.InputValidationError("File JSON phải là một đối tượng đơn hàng")
+
+        wrapped = dinh_muc_service.run_and_summarize(
+            order, colors, outdir=os.path.join(tmp, "out"))
+        result = wrapped["result"]
+        summary = wrapped["summary"]
+        fields_json = result.get("products") or []
+
+        warnings = []
+        for product in fields_json:
+            for w in ((product.get("fields") or {}).get("warnings") or []):
+                if w not in warnings:
+                    warnings.append(w)
+
+        row = db.get_store().create_order({
+            "order_id": order.get("order_id", ""),
+            "customer": order.get("customer", ""),
+            "product_name": order.get("product_name", ""),
+            "product_code": order.get("product_code", ""),
+            "qty": order.get("qty"),
+            "so_mau_in": colors,
+            "family": result.get("family"),
+            "stage": "thong_tin",
+            "order_json": order,
+            "fields_json": fields_json,
+            "summary_json": summary,
+            "warnings": warnings,
+            "reviewer": reviewer.strip() or None,
+        })
+    except generate.InputValidationError as e:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise HTTPException(500, traceback.format_exc())
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    response = RedirectResponse("/board", status_code=303)
+    if reviewer.strip():
+        _set_reviewer_cookie(response, reviewer.strip())
+    return response
+
+
+@app.get("/orders/{order_id}", response_class=HTMLResponse)
+async def order_detail(order_id: str):
+    row = _load_order_or_404(order_id)
+    return pages.review_page(row)
+
+
+@app.post("/orders/{order_id}/accept")
+async def order_accept(request: Request, order_id: str):
+    """Kế toán duyệt → khoá vào 'Lập định mức NVL' với tên người duyệt."""
+    form = await request.form()
+    reviewer = str(form.get("reviewer") or "")
+    row = _load_order_or_404(order_id)
+    name = _reviewer_name(request, reviewer)
+    db.get_store().update_order(
+        order_id, stage="dinh_muc",
+        accepted_at=db.utcnow(), accepted_by=name,
+        reviewer=name, reject_reason="")
+    response = RedirectResponse(f"/orders/{order_id}", status_code=303)
+    _set_reviewer_cookie(response, name)
+    return response
+
+
+@app.post("/orders/{order_id}/reject")
+async def order_reject(request: Request, order_id: str):
+    """Trả về 'Thông tin đơn hàng' kèm lý do để sửa rồi import lại."""
+    form = await request.form()
+    reason = str(form.get("reason") or "")
+    reviewer = str(form.get("reviewer") or "")
+    row = _load_order_or_404(order_id)
+    name = _reviewer_name(request, reviewer)
+    db.get_store().update_order(
+        order_id, stage="thong_tin", reject_reason=reason.strip(),
+        reviewer=name, accepted_at=None, accepted_by=None)
+    response = RedirectResponse(f"/orders/{order_id}", status_code=303)
+    _set_reviewer_cookie(response, name)
+    return response
+
+
+@app.post("/orders/{order_id}/stage")
+async def order_stage(request: Request, order_id: str):
+    """Di chuyển đơn giữa các cột (ke_toan / qc / chuan_bi)."""
+    form = await request.form()
+    to = str(form.get("to") or "")
+    reviewer = str(form.get("reviewer") or "")
+    if to not in pages.STAGE_KEYS:
+        raise HTTPException(400, "Trạng thái không hợp lệ")
+    row = _load_order_or_404(order_id)
+    name = _reviewer_name(request, reviewer)
+    db.get_store().update_order(order_id, stage=to, reviewer=name)
+    response = RedirectResponse(f"/orders/{order_id}", status_code=303)
+    _set_reviewer_cookie(response, name)
+    return response
+
+
+@app.get("/orders/{order_id}/download")
+async def order_download(order_id: str):
+    """Tải ZIP (Định mức + YCSX): tái tạo từ order_json đã lưu — khả dụng mọi lúc,
+    nhấn mạnh sau khi Duyệt."""
+    row = _load_order_or_404(order_id)
+    order = row.get("order_json")
+    if not isinstance(order, dict):
+        raise HTTPException(400, "Đơn hàng này thiếu dữ liệu order_json")
+    tmp = tempfile.mkdtemp()
+    try:
+        res = generate.run(("dict", order), int(row.get("so_mau_in") or 0),
+                           outdir=os.path.join(tmp, "out"))
+        zip_path = res["outputs"][0]
+        return FileResponse(
+            zip_path, media_type="application/zip", filename=os.path.basename(zip_path),
+            background=BackgroundTask(shutil.rmtree, tmp))
     except Exception as e:
         shutil.rmtree(tmp, ignore_errors=True)
         raise HTTPException(500, traceback.format_exc())
