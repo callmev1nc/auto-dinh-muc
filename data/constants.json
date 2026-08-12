@@ -3,6 +3,9 @@
   "dung_sai_default": 0.05,
   "dung_sai_field": "order.tolerance (optional, overrides default)",
 
+  "so_mau_in_max": 6,
+  "_so_mau_in_max_note": "Máy in tối đa 6 màu — khớp với phe_chong_mau_m (chỉ có key 1..6).",
+
   "dinh_luong_giay_kraft_gm2": 70,
   "dinh_luong_manh_trang_gm2": 70,
   "dinh_luong_manh_trong_gm2": 72,
@@ -67,10 +70,13 @@
   },
 
   "may": {
+    "_nep_note": "Khối lượng 1 nẹp = chiều rộng nẹp (m) * định lượng nẹp * (chiều rộng bao + nep_extra_cm/100). Tổng kg nẹp = số lượng * khối lượng 1 nẹp. Một đơn có thể dùng 2 nẹp: nẹp KP để MAY + nẹp giấy để DÁN.",
     "chi_may_kg_per_1000_bao": 0.6,
     "day_bo_bao_kg_per_5000": 1.0,
     "nep_kp_dinh_luong": 0.16,
     "nep_opp_dinh_luong": 0.106,
+    "nep_giay_dinh_luong": 0.07,
+    "nep_rong_cm_default": {"KP": 6, "OPP": 6, "GIAY": 10},
     "nep_extra_cm": 12
   }
 }

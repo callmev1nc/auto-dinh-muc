@@ -33,6 +33,7 @@ sys.path.insert(0, HERE)
 import base_columns
 import base_vn
 import dinh_muc_service
+import generate
 
 
 def ask(prompt):
@@ -84,6 +85,9 @@ def main(argv=None) -> int:
             return 1
     if colors < 0:
         print("So mau in phai >= 0.")
+        return 1
+    if colors > generate.SO_MAU_IN_MAX:
+        print(f"So mau in toi da la {generate.SO_MAU_IN_MAX}.")
         return 1
 
     try:

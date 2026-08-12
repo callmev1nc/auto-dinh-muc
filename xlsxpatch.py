@@ -93,10 +93,14 @@ class XlsxPatch:
         for s in wb.find(NS + "sheets").findall(NS + "sheet"):
             name = s.get("name")
             tgt = rels.get(s.get("{%s}id" % RNS), "")
-            if tgt and not tgt.startswith("xl/"):
-                tgt = "xl/" + tgt
+            # Target có 2 dạng: tương đối với xl/ ("worksheets/sheet1.xml" — Excel
+            # ghi kiểu này) hoặc tuyệt đối trong package ("/xl/worksheets/sheet1.xml"
+            # — openpyxl, một số tool khác). Phải xét dạng tuyệt đối TRƯỚC, nếu không
+            # "/xl/..." sẽ bị ghép thành "xl//xl/..." và set_value ném KeyError.
             if tgt.startswith("/"):
-                tgt = tgt[1:]
+                tgt = tgt.lstrip("/")
+            elif tgt and not tgt.startswith("xl/"):
+                tgt = "xl/" + tgt
             self.sheet_paths[name] = tgt
 
     # ---------- styles ----------

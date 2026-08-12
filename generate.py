@@ -57,6 +57,9 @@ RULES = load_json("customer_rules.json")
 BAG = load_json("bag_type_map.json")
 DIMS = load_json("standard_dims.json")
 
+# Máy in tối đa 6 màu (khớp constants.phe_chong_mau_m chỉ có key 1..6).
+SO_MAU_IN_MAX = int(CONST.get("so_mau_in_max", 6))
+
 
 # ---------------------------------------------------------------- parse order
 def parse_ycsx(path):
@@ -112,19 +115,37 @@ def parse_ycsx(path):
          for row in ws.iter_rows(values_only=False)
          for c in row if isinstance(c.value, str)}
 
-    def bval(label):
-        for val in g.values():
-            if val and val.startswith(label):
-                return val.split(":", 1)[-1].strip() if ":" in val else ""
-        return ""
+    def bfind(label):
+        """(coord, value) của ô đầu tiên mang nhãn header + danh sách ô TRÙNG.
 
-    order = {
-        "customer": bval("2. Khách hàng") or g.get("B7", ""),
-        "address": bval("3. Địa chỉ"),
-        "customer_code": bval("4. Mã khách hàng"),
-        "order_id": bval("5. Số đơn hàng"),
-        "ngay_yc": bval("1. Ngày yêu cầu"),
+        Trả cả toạ độ để fill_ycsx ghi ĐÚNG ô đã đọc ra, thay vì ghi cứng B6:B10
+        (đơn Hùng Duy 25S03IKH00502000046: layout lệch dòng nên bản ghi cứng tạo
+        thêm một dòng "5. Số đơn hàng" thứ hai ngay trên bảng sản phẩm).
+        """
+        hits = [(coord, val) for coord, val in g.items() if val and val.startswith(label)]
+        if not hits:
+            return None, "", []
+        coord, val = hits[0]
+        value = val.split(":", 1)[-1].strip() if ":" in val else ""
+        return coord, value, [c for c, _ in hits[1:]]
+
+    HEADER_LABELS = {
+        "ngay_yc": "1. Ngày yêu cầu",
+        "customer": "2. Khách hàng",
+        "address": "3. Địa chỉ",
+        "customer_code": "4. Mã khách hàng",
+        "order_id": "5. Số đơn hàng",
     }
+    header_cells, dup_cells = {}, []
+    order = {}
+    for field, label in HEADER_LABELS.items():
+        coord, value, dups = bfind(label)
+        order[field] = value
+        if coord:
+            header_cells[field] = {"ref": coord, "label": label, "text": g[coord]}
+        dup_cells.extend(dups)
+    if not order["customer"]:
+        order["customer"] = g.get("B7", "")
 
     # --- locate the product-table header row + columns by header labels --------
     # Portable across customers: a sale YCSX may start the table on a different
@@ -137,6 +158,7 @@ def parse_ycsx(path):
     NAME_KEYS = ("tên sản phẩm", "ten san pham", "tên hàng", "mặt hàng")
     MACODE_KEYS = ("mã code", "ma code", "mtls")
     SPEC_KEYS = ("chi tiết kỹ thuật", "chi tiet ky thuat", "thông số", "quy cách")
+    DVT_KEYS = ("đvt", "dvt", "đơn vị", "don vi")
 
     def _col_with(row, keys):
         for c in range(1, 24):
@@ -155,6 +177,9 @@ def parse_ycsx(path):
     name_col = _col_with(header_row, NAME_KEYS) or "D"
     ma_col = _col_with(header_row, MACODE_KEYS) or "E"
     spec_col = _col_with(header_row, SPEC_KEYS) or "F"
+    # ĐVT dò theo nhãn — KHÔNG mặc định về "I": khách nào không có cột "Mã code"
+    # thì mọi cột lệch đi 1 và ghi cứng "Cái" vào I sẽ đè lên cột khác.
+    dvt_col = _col_with(header_row, DVT_KEYS)
 
     # product rows: any row under the header with a numeric qty + a code/name.
     # Stage-marker rows (MÀNH/IN/TRÁNG/...) carry no qty -> skipped.
@@ -189,8 +214,19 @@ def parse_ycsx(path):
     # layout anchor used to re-fill the SAME file when the input is a YCSX
     order["ycsx_header_row"] = header_row
     order["ycsx_cols"] = {
-        "code": code_col, "name": name_col, "ma": ma_col, "spec": spec_col, "qty": qty_col,
+        "code": code_col, "name": name_col, "ma": ma_col, "spec": spec_col,
+        "qty": qty_col, "dvt": dvt_col,
     }
+    order["ycsx_header_cells"] = header_cells
+    # ô TRÙNG nhãn header — chỉ tính phần NẰM TRÊN bảng sản phẩm để không bao giờ
+    # chạm vào dòng sản phẩm / ghi chú giao hàng.
+    order["ycsx_dup_header_cells"] = [
+        ref for ref in dup_cells if coordinate_to_tuple(ref)[0] < header_row]
+    # snapshot để fill_ycsx so sánh trước khi ghi (chỉ ghi ô nào THỰC SỰ khác)
+    order["ycsx_snapshot"] = {
+        c.coordinate: c.value
+        for row in ws.iter_rows(min_row=1, max_row=header_row + 40, max_col=13)
+        for c in row if c.value is not None}
 
     # top-level single-product fields = first product (backward compat)
     p0 = products[0]
@@ -206,19 +242,27 @@ def parse_ycsx(path):
     return order
 
 
+# Dấu nhân trong kích thước: sale viết "x", "X", "×" hoặc "*" (đơn Hùng Duy
+# 25S03IKH00502000046 ghi "(57*110cm)" → trước đây không parse được, sheet Thổi 2
+# bị trống kích thước túi lồng). Character class, KHÔNG phải group — các regex
+# dùng nó đang đánh số group theo vị trí.
+_MUL = r"[xX×*]"
+
+
 def parse_spec(spec):
     """Extract dimensions / structure / bag hints from the Chi tiết kỹ thuật text."""
     out = {}
     if not spec:
         return out
-    # dimensions like "(42+8) cm x 82cm" (optional parens) or "50x92 cm"
-    m = re.search(r"\(?\s*(\d+)\s*\+\s*(\d+)\s*\)?\s*(?:cm\s*)?x\s*(\d+(?:\.\d+)?)\s*cm", spec)
+    # dimensions like "(42+8) cm x 82cm" (optional parens) or "50x92 cm".
+    # Dấu nhân: khách hàng viết cả "x", "X", "×" và "*" (đơn Hùng Duy: "(57*110cm)").
+    m = re.search(r"\(?\s*(\d+)\s*\+\s*(\d+)\s*\)?\s*(?:cm\s*)?" + _MUL + r"\s*(\d+(?:\.\d+)?)\s*cm", spec)
     if m:
         out["width_cm"] = int(m.group(1)); out["gusset_cm"] = int(m.group(2))
         out["width_plus_gusset_m"] = (int(m.group(1)) + int(m.group(2))) / 100
         out["bag_length_m"] = float(m.group(3)) / 100
     else:
-        m = re.search(r"(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*cm", spec)
+        m = re.search(r"(\d+(?:\.\d+)?)\s*" + _MUL + r"\s*(\d+(?:\.\d+)?)\s*cm", spec)
         if m:
             out["width_plus_gusset_m"] = float(m.group(1)) / 100
             out["bag_length_m"] = float(m.group(2)) / 100
@@ -244,21 +288,110 @@ def _parse_tui_long(spec):
     if m_loai:
         loai = m_loai.group(1).strip().lower()
     out["tui_long_loai"] = "rin" if loai == "rin" else "thường"
-    m_dim = re.search(r"(\d+)\s*x\s*(\d+)\s*cm", spec, re.IGNORECASE)
+    # Kích thước túi lồng — chỉ tìm trong mệnh đề nói về túi lồng, nếu không
+    # regex sẽ bắt nhầm kích thước BAO ở dòng "1.Kích thước: (45+10) x 89cm".
+    seg = _tui_long_segment(spec)
+    m_dim = re.search(r"(\d+)\s*" + _MUL + r"\s*(\d+)\s*cm", seg, re.IGNORECASE)
     if not m_dim:
         # nhiều YCSX ghi thiếu đơn vị: "túi PE rin 50x92 (20gr) (LTMS)"
-        m_dim = re.search(r"(\d{2,3})\s*x\s*(\d{2,3})\s*[( ]", spec)
+        m_dim = re.search(r"(\d{2,3})\s*" + _MUL + r"\s*(\d{2,3})\s*[( ]", seg)
     if m_dim:
         out["tui_long_rong_cm"] = int(m_dim.group(1))
         out["tui_long_dai_cm"] = int(m_dim.group(2))
     m_qc = re.search(r"\((LTMS|MTLS)\)", spec, re.IGNORECASE)
+    if not m_qc:
+        m_qc = re.search(r"(LTMS|MTLS)", spec, re.IGNORECASE)
     if m_qc:
         out["tui_long_quy_cach_day"] = m_qc.group(1).upper()
     else:
-        m_qc = re.search(r"(LTMS|MTLS)", spec, re.IGNORECASE)
-        if m_qc:
-            out["tui_long_quy_cach_day"] = m_qc.group(1).upper()
+        # YCSX cũng hay ghi bằng chữ: "(túi lồng may không dính đáy)".
+        # Xác nhận 2026-08-12: may KHÔNG dính đáy = đáy ngắn, may dính đáy = đáy dài.
+        m_day = re.search(r"may\s+(không\s+)?dính\s+đáy", spec, re.IGNORECASE)
+        if m_day:
+            out["tui_long_quy_cach_day"] = ("may không dính đáy" if m_day.group(1)
+                                            else "may dính đáy")
     return out
+
+
+def _tui_long_segment(spec):
+    """Đoạn text nói về túi lồng (từ từ khoá lồng túi tới hết dòng/mục kế tiếp).
+
+    Cần thiết vì spec chứa NHIỀU cặp số dạng "A x B cm" (kích thước bao ở mục 1,
+    kích thước túi lồng ở mục 5) — tìm trên cả spec sẽ lấy nhầm số đầu tiên.
+    """
+    low = spec.lower()
+    idx = min((low.find(k) for k in _LINER_KW if low.find(k) >= 0), default=-1)
+    if idx < 0:
+        return spec
+    seg = spec[idx:]
+    # cắt ở đầu mục kế tiếp ("6. Quy cách đóng gói: ...") nếu có
+    m_next = re.search(r"\n\s*\d+\s*[.)]", seg)
+    return seg[:m_next.start()] if m_next else seg
+
+
+def _parse_nep(spec, order=None):
+    """Parse quy cách nẹp từ 'Chi tiết kỹ thuật' → list[{loai, rong_cm, tokens}].
+
+    Một đơn thường dùng NHIỀU nẹp, ví dụ YCSX Hùng Duy:
+        "May nẹp đáy bao (Nẹp KP nhật vàng), dán nẹp giấy đầu còn lại nẹp 10cm
+         - dán nẹp giấy về cùng 1 bên mặt sau."
+    → nẹp KP vàng Nhật (may) + nẹp giấy 10cm (dán).
+
+    loai: "KP" | "GIAY" | "OPP" | "PP".  tokens: các từ màu/xuất xứ lấy ngay
+    trong cụm đó, dùng để tra Nguyên vật liệu.xlsx (không phụ thuộc thứ tự từ).
+    Nẹp giấy không ghi màu/xuất xứ → thừa hưởng từ giấy thân bao (quyết định
+    2026-08-12: "nẹp giấy chọn theo giấy thân bao").
+    Trả [] khi spec không nói gì về nẹp.
+    """
+    if not spec:
+        return []
+    order = order or {}
+    defaults = CONST["may"]["nep_rong_cm_default"]
+    # Chiều rộng ghi rời, không gắn với loại nào: "... còn lại nẹp 10cm"
+    loose_w = None
+    for m in re.finditer(r"nẹp\s+(\d+(?:[.,]\d+)?)\s*cm", spec, re.IGNORECASE):
+        loose_w = float(m.group(1).replace(",", "."))
+
+    found = {}
+    for m in re.finditer(r"nẹp\s+(kp|giấy|giay|opp|pp)\b", spec, re.IGNORECASE):
+        raw = m.group(1).lower()
+        loai = {"kp": "KP", "giấy": "GIAY", "giay": "GIAY", "opp": "OPP", "pp": "PP"}[raw]
+        # mệnh đề của cụm này: tới dấu ngắt câu gần nhất
+        tail = re.split(r"[,;)\n\-–]", spec[m.end():], maxsplit=1)[0]
+        m_w = re.search(r"(\d+(?:[.,]\d+)?)\s*cm", tail)
+        rong_cm = float(m_w.group(1).replace(",", ".")) if m_w else None
+        tokens = [t for t in re.findall(r"[A-Za-zÀ-ỹ]+", tail) if t.lower() in _NEP_TOKENS]
+        prev = found.get(loai)
+        if prev is None:
+            found[loai] = {"loai": loai, "rong_cm": rong_cm, "tokens": tokens}
+        else:  # cụm sau bổ sung thông tin cho cụm trước (KP/giấy nhắc nhiều lần)
+            if prev["rong_cm"] is None:
+                prev["rong_cm"] = rong_cm
+            for t in tokens:
+                if t not in prev["tokens"]:
+                    prev["tokens"].append(t)
+
+    nep = []
+    for loai, item in found.items():
+        if item["rong_cm"] is None and loai == "GIAY" and loose_w is not None:
+            item["rong_cm"] = loose_w      # "dán nẹp giấy ... nẹp 10cm"
+        if item["rong_cm"] is None and len(found) == 1 and loose_w is not None:
+            item["rong_cm"] = loose_w
+        if item["rong_cm"] is None:
+            item["rong_cm"] = defaults.get(loai, 6)
+            item["rong_cm_default"] = True
+        if loai == "GIAY" and not item["tokens"]:
+            item["tokens"] = [str(order.get("giay_kraft_mau", "vàng")),
+                              str(order.get("giay_kraft_xuatxu", "Nhật"))]
+            item["tokens_from_bao"] = True
+        nep.append(item)
+    return nep
+
+
+# Từ màu/xuất xứ dùng để nhận diện đúng dòng nẹp trong Nguyên vật liệu.xlsx.
+# CHÚ Ý: danh mục gốc viết sai chính tả "Karft" nên KHÔNG có "kraft" ở đây.
+_NEP_TOKENS = {"vàng", "trắng", "xám", "nhật", "việt", "vn", "thái", "bãi", "bằng",
+               "mờ", "bóng", "xanh", "đỏ", "tím", "cam", "decal"}
 
 
 def _detect_has_print(order, so_mau_in=None):
@@ -305,6 +438,21 @@ def _to_num(v):
             return float(v)
         except Exception:
             return None
+
+
+def _same_cell(old, new):
+    """True khi ghi `new` vào ô đang chứa `old` sẽ không thay đổi gì thực chất.
+
+    So khớp lỏng vì Excel lưu số dưới dạng chuỗi tuỳ file ('5000' vs 5000).
+    """
+    if old is None or old == "":
+        return new is None or new == ""
+    if new is None or new == "":
+        return False
+    on, nn = _to_num(old), _to_num(new)
+    if on is not None and nn is not None:
+        return float(on) == float(nn)
+    return str(old).strip() == str(new).strip()
 
 
 _LINER_KW = ("lồng túi", "túi lồng", "pe thường", "pe rin", "pe lồng")
@@ -425,6 +573,9 @@ def validate_inputs(order, family, so_mau_in):
     has_print = _detect_has_print(order, so_mau_in)
     if so_mau_in < 0:
         errors.append("- Số màu in (so_mau_in) không được âm")
+    if so_mau_in > SO_MAU_IN_MAX:
+        errors.append(f"- Số màu in (so_mau_in) tối đa là {SO_MAU_IN_MAX} — máy in "
+                      f"chỉ chạy được {SO_MAU_IN_MAX} màu")
     has_liner = _has_tui_long(order)
     if has_liner and float(order.get("inner_bag_weight_kg") or 0) <= 0:
         errors.append("- inner_bag_weight_kg (Quy cách lồng túi PE) không hợp lệ — kiểm tra dòng 'Quy cách lồng túi PE' trong spec")
@@ -582,56 +733,97 @@ def compute(order, family, so_mau_in):
             tui_g18 = round(qty * ibw * (1 + tol) * 0.107, 4)
         rong_cm = order.get("tui_long_rong_cm")
         dai_cm = order.get("tui_long_dai_cm")
+        # Tên mô tả theo YCSX — LUÔN dựng sẵn để Thổi!C19 không bao giờ trống.
+        # (Template KP có sẵn mã cũ TEB0400521121 ở Thổi!D19 và công thức
+        # May!C19 = "=Thổi!C19"; để trống C19 thì sheet May hiện số 0 và sheet
+        # Thổi giữ nguyên mã cũ của đơn khác.)
+        qc_txt = f", đáy {day_loai}" if day_loai else (f" ({quy_cach_day})" if quy_cach_day else "")
+        kt_txt = f"{int(rong_cm)}x{int(dai_cm)}cm " if rong_cm and dai_cm else ""
+        tui_ten_ycsx = (f"Túi PE {order.get('tui_long_loai', 'thường')} "
+                        f"{kt_txt}{int(round(ibw * 1000))}gr{qc_txt}")
         if order.get("tui_long_ma"):
-            tui_ten, tui_ma = order.get("tui_long_ten"), order.get("tui_long_ma")
+            tui_ten, tui_ma = order.get("tui_long_ten") or tui_ten_ycsx, order.get("tui_long_ma")
         elif items and rong_cm and dai_cm:
             tui, tui_cands = nvl.find_tui_long(
                 items, order.get("tui_long_loai", "thường"), int(rong_cm), int(dai_cm),
                 int(round(ibw * 1000)), day_loai=day_loai)
             if tui:
                 tui_ten, tui_ma = tui["ten"], tui["ma"]
+                if len(tui_cands) > 1:
+                    warnings.append(
+                        f"Túi PE: Nguyên vật liệu.xlsx có {len(tui_cands)} dòng trùng tên "
+                        f"'{tui['ten']}' ({[c['ma'] for c in tui_cands]}) — dùng mã {tui['ma']}, "
+                        f"cần kiểm tra lại danh mục NVL.")
                 if not day_loai:
                     warnings.append(f"Túi PE: tra được 1 ứng viên ({tui['ten']}, mã {tui['ma']}) "
                                     f"nhưng YCSX không nêu rõ LTMS/MTLS — cần Nhàn xác nhận.")
             else:
-                qc_txt = f", đáy {day_loai}" if day_loai else (f" ({quy_cach_day})" if quy_cach_day else "")
-                tui_ten = (f"Túi PE {order.get('tui_long_loai', 'thường')} "
-                           f"{int(rong_cm)}x{int(dai_cm)}cm {int(round(ibw * 1000))}gr{qc_txt}")
-                tui_ma = None
+                tui_ten, tui_ma = tui_ten_ycsx, None
                 warnings.append(f"Chưa xác định được mã Túi PE khớp (rộng/dài/khối lượng/đáy) trong "
                                 f"Nguyên vật liệu.xlsx — điền tên theo YCSX ({tui_ten}), để trống Mã, "
-                                f"cần Nhàn tra. Ứng viên gần đúng: {tui_cands}.")
+                                f"cần Nhàn tra. Ứng viên gần đúng: {[c['ten'] for c in tui_cands]}.")
         elif not items:
-            tui_ten, tui_ma = None, None
+            tui_ten, tui_ma = tui_ten_ycsx, None
         else:
-            tui_ten, tui_ma = None, None
+            tui_ten, tui_ma = tui_ten_ycsx, None
             warnings.append("YCSX không nêu rõ kích thước túi lồng (rộng/dài) nên chưa tra được Mã "
-                            "Túi PE trong Nguyên vật liệu.xlsx — để trống, cần Nhàn bổ sung.")
+                            "Túi PE trong Nguyên vật liệu.xlsx — điền tên theo YCSX, để trống Mã, "
+                            "cần Nhàn bổ sung.")
     elif bao_type == "BOPP":
         pass  # không lồng túi → ẩn sheet Thổi
 
     # ---- Nẹp rows (May sheet 21/22)
+    # Khối lượng 1 nẹp = rộng nẹp (m) × định lượng nẹp × (rộng bao + 12cm);
+    # tổng kg = số lượng × khối lượng 1 nẹp. Một đơn có thể dùng 2 nẹp: nẹp KP
+    # để MAY + nẹp giấy để DÁN (YCSX Hùng Duy 25S03IKH00502000046).
+    nep_spec = order.get("nep") or _parse_nep(order.get("spec", ""), order)
+    nep_extra_m = CONST["may"]["nep_extra_cm"] / 100
+    nep_dl = {"KP": CONST["may"]["nep_kp_dinh_luong"],
+              "OPP": CONST["may"]["nep_opp_dinh_luong"],
+              "PP": CONST["may"]["nep_opp_dinh_luong"],
+              "GIAY": CONST["may"]["nep_giay_dinh_luong"]}
+    nep_base_kw = {"KP": "nẹp kp", "GIAY": "nẹp giấy", "OPP": "nẹp opp", "PP": "nẹp pp"}
     nep_rows = []
-    for nep in order.get("nep", []):
+    for nep in nep_spec:
         loai = str(nep.get("loai", "")).upper()
-        rong_cm = float(nep.get("rong_cm", 6))
-        rong_m = rong_cm / 100
-        if loai == "KP":
-            dinh_luong = CONST["may"]["nep_kp_dinh_luong"]
-            nep_item = _exact([f"Nẹp KP {nep.get('mau_xuatxu','')}".strip(), f"{int(rong_cm)}cm"])
-            name = nep_item["ten"] if nep_item else f"Nẹp KP {nep.get('mau_xuatxu','')} {int(rong_cm)}cm"
-            code = nep_item["ma"] if nep_item else None
-        elif loai == "GIAY":
-            dinh_luong = 0.07
-            nep_item = _exact(["Nẹp giấy", f"{int(rong_cm)}cm"])
-            name = nep_item["ten"] if nep_item else f"Nẹp giấy {int(rong_cm)}cm"
-            code = nep_item["ma"] if nep_item else None
-        else:  # OPP
-            dinh_luong = CONST["may"]["nep_opp_dinh_luong"]
-            name, code = f"Nẹp OPP {int(rong_cm)}cm — xác nhận tên/mã", None
-        kg = round(rong_m * qty * (W + 0.12) * dinh_luong, 4)
+        rong_cm = float(nep.get("rong_cm") or CONST["may"]["nep_rong_cm_default"].get(loai, 6))
+        rong_txt = f"{rong_cm:g}".replace(".", ",")
+        dinh_luong = nep_dl.get(loai, CONST["may"]["nep_opp_dinh_luong"])
+        tokens = [str(t) for t in (nep.get("tokens") or [])
+                  if str(t).strip()] or ([str(nep["mau_xuatxu"])] if nep.get("mau_xuatxu") else [])
+        name, code = nep.get("ten"), nep.get("ma")
+        if not name:
+            nep_item, nep_cands = (None, [])
+            if items:
+                nep_item, nep_cands = nvl.find_nep(
+                    items, [nep_base_kw.get(loai, "nẹp")] + tokens, rong_cm)
+            if nep_item:
+                name, code = nep_item["ten"], nep_item["ma"]
+                if len(nep_cands) > 1:
+                    warnings.append(
+                        f"Nẹp {loai}: Nguyên vật liệu.xlsx có {len(nep_cands)} dòng trùng "
+                        f"tên '{nep_item['ten']}' — dùng mã {nep_item['ma']}, cần kiểm tra "
+                        f"lại danh mục NVL.")
+            else:
+                name = f"Nẹp {'giấy' if loai == 'GIAY' else loai} {' '.join(tokens)} {rong_txt}cm".replace("  ", " ")
+                code = None
+                warnings.append(
+                    f"Chưa xác định được mã Nẹp {loai} {' '.join(tokens)} {rong_txt}cm trong "
+                    f"Nguyên vật liệu.xlsx — điền tên theo YCSX, để trống Mã, cần Nhàn tra. "
+                    f"Ứng viên gần đúng: {[c['ten'] for c in nep_cands] if items else '(chưa có file NVL)'}.")
+        if nep.get("rong_cm_default"):
+            warnings.append(f"Nẹp {loai}: YCSX không ghi chiều rộng nẹp — dùng mặc định "
+                            f"{rong_txt}cm, cần Nhàn xác nhận.")
+        if nep.get("tokens_from_bao"):
+            warnings.append(f"Nẹp {loai}: YCSX không ghi màu/xuất xứ nẹp — suy theo giấy thân "
+                            f"bao ({' '.join(tokens)}), cần Nhàn xác nhận.")
+        kg = round((rong_cm / 100) * qty * (W + nep_extra_m) * dinh_luong, 4)
         nep_rows.append({"loai": loai, "name": name, "code": code, "kg": kg})
-    if not order.get("nep"):
+    if len(nep_rows) > 2:
+        warnings.append(f"Đơn dùng {len(nep_rows)} loại nẹp nhưng sheet May chỉ có 2 dòng nẹp "
+                        f"(21/22) — chỉ điền 2 dòng đầu, cần Nhàn xử lý tay: "
+                        f"{[n['name'] for n in nep_rows[2:]]}.")
+    if not nep_rows:
         warnings.append("Đơn không dùng nẹp — sẽ để 0/xóa các ô nẹp ở sheet May.")
 
     # ---- Tráng 2 (Nhật ký SX)
@@ -897,31 +1089,39 @@ def fill_dinh_muc(template_path, family, fields, so_mau_in, out_path):
     _set(xp, "Dán", "G18", fields.get("dan_g18"))
 
     # --- Thổi (túi lồng) ---
+    # C19/D19 ghi thẳng qua set_value (KHÔNG qua _set) để None cũng được ghi:
+    # template KP mang sẵn mã túi cũ TEB0400521121 ở D19, _set() bỏ qua None nên
+    # mã của đơn khác sẽ lọt vào phiếu.
     if has_tui_long and present("Thổi"):
         _set(xp, "Thổi", "C17", fields.get("tui_ldpe_ten"))
         _set(xp, "Thổi", "G17", fields.get("tui_g17"))
         _set(xp, "Thổi", "G18", fields.get("tui_g18"))
-        _set(xp, "Thổi", "C19", fields.get("tui_ten"))
-        _set(xp, "Thổi", "D19", fields.get("tui_ma"))
+        xp.set_value("Thổi", "C19", fields.get("tui_ten") or None)
+        xp.set_value("Thổi", "D19", fields.get("tui_ma") or None)
+    elif present("Thổi"):
+        # không lồng túi: sheet Thổi bị ẩn, nhưng May!C19/D19/G19/G20 là công thức
+        # "=Thổi!…" nên vẫn hiện 0 + mã cũ trên sheet May đang hiển thị → xóa cả hai.
+        for ref in ("C19", "D19"):
+            xp.set_value("Thổi", ref, None)
+        for ref in ("C19", "D19", "G19", "G20"):
+            xp.set_value("May", ref, None)
 
     # --- May ---
     _set(xp, "May", "G17", fields.get("chi_may_kg"))
     _set(xp, "May", "C18", fields.get("day_bo_bao_ten"))
     _set(xp, "May", "G18", fields.get("day_bo_bao_kg"))
     nep_rows = fields.get("nep_rows", [])
-    if nep_rows:
-        for i, nep in enumerate(nep_rows):
-            r = 21 + i
-            _set(xp, "May", f"C{r}", nep["name"])
-            _set(xp, "May", f"D{r}", nep["code"])
+    for i, r in enumerate((21, 22)):
+        nep = nep_rows[i] if i < len(nep_rows) else None
+        if nep:
+            xp.set_value("May", f"C{r}", nep["name"])
+            xp.set_value("May", f"D{r}", nep["code"] or None)
+            _set(xp, "May", f"F{r}", "Kg")   # template OPP thiếu ĐVT ở dòng 21/22
             _set(xp, "May", f"G{r}", nep["kg"])
-        if len(nep_rows) == 1:
-            _set(xp, "May", "G22", 0)
-    else:
-        _blank(xp, "May", "C21")
-        _blank(xp, "May", "D21")
-        _set(xp, "May", "G21", 0)
-        _set(xp, "May", "G22", 0)
+        else:
+            _blank(xp, "May", f"C{r}")
+            _blank(xp, "May", f"D{r}")
+            _set(xp, "May", f"G{r}", 0)
 
     # --- May 2 (Quy cách) ---
     if present("May 2"):
@@ -1060,7 +1260,12 @@ def fill_ycsx(src_path, order, out_path, preserve=False):
     preserve=True — the input IS a YCSX file (clone-and-fill): the source
     workbook stays intact apart from the header block and the parsed product
     lines, so mã code, mã khách hàng, giao-hàng notes and the per-stage quality
-    block (MÀNH/IN/TRÁNG/DÁN/THỔI/MAY) are never deleted.
+    block (MÀNH/IN/TRÁNG/DÁN/THỔI/MAY) are never deleted. Hai quy tắc giữ phiếu
+    của sale nguyên vẹn (sửa 2026-08-12):
+      * chỉ ghi ô nào giá trị THỰC SỰ khác so với file gốc (_write/_same_cell);
+      * ghi vào ĐÚNG toạ độ ô đã dò được khi parse (order["ycsx_header_cells"]),
+        không ghi cứng B6:B10 — layout của mỗi khách một khác, ghi cứng sẽ tạo
+        thêm một dòng "5. Số đơn hàng" thứ hai ngay trên bảng sản phẩm.
     preserve=False — no input YCSX (order JSON / sample, generic template):
     the stale product region is cleared so leftovers can't leak into the output.
 
@@ -1077,17 +1282,40 @@ def fill_ycsx(src_path, order, out_path, preserve=False):
     xp = XlsxPatch(src_path)
     cm = CELLMAP["ycsx"]
     sheet = list(xp.sheet_paths)[0]
+    snapshot = order.get("ycsx_snapshot") or {}
 
-    # header — always rewrite as "label: value" so stale values can't survive
-    labels = cm.get("header_labels") or {
-        "B6": "1. Ngày yêu cầu", "B7": "2. Khách hàng", "B8": "3. Địa chỉ",
-        "B9": "4. Mã khách hàng", "B10": "5. Số đơn hàng",
-    }
-    hfields = {"B6": "ngay_yc", "B7": "customer", "B8": "address",
-               "B9": "customer_code", "B10": "order_id"}
+    def _write(ref, value):
+        """Ghi ô — nhưng ở chế độ preserve thì BỎ QUA khi giá trị không đổi.
+
+        Đơn Hùng Duy 25S03IKH00502000046: mọi giá trị đều vừa được đọc ra từ chính
+        file này, nên ghi lại là vô nghĩa mà vẫn có rủi ro làm phiếu của sale khác đi.
+        Không ghi gì thì không thể nào tạo thêm dòng trùng.
+        """
+        if preserve and ref in snapshot and _same_cell(snapshot[ref], value):
+            return False
+        return xp.set_value(sheet, ref, value)
+
+    # header — ghi vào ĐÚNG ô đã dò được khi parse (không ghi cứng B6:B10)
+    header_cells = order.get("ycsx_header_cells") or {}
+    if header_cells:
+        labels = {v["ref"]: v["label"] for v in header_cells.values()}
+        hfields = {v["ref"]: k for k, v in header_cells.items()}
+    else:  # nguồn là JSON/sample/template chung — dùng layout mặc định QTKSX-BM01
+        labels = cm.get("header_labels") or {
+            "B6": "1. Ngày yêu cầu", "B7": "2. Khách hàng", "B8": "3. Địa chỉ",
+            "B9": "4. Mã khách hàng", "B10": "5. Số đơn hàng",
+        }
+        hfields = {"B6": "ngay_yc", "B7": "customer", "B8": "address",
+                   "B9": "customer_code", "B10": "order_id"}
     for ref, label in labels.items():
         val = order.get(hfields.get(ref, ""), "") or ""
-        xp.set_value(sheet, ref, f"{label}: {val}".rstrip())
+        _write(ref, f"{label}: {val}".rstrip())
+
+    # xóa các ô TRÙNG nhãn header nằm phía trên bảng sản phẩm (bản sao thừa của
+    # "5. Số đơn hàng: …" mà phiếu không cần)
+    if preserve:
+        for ref in order.get("ycsx_dup_header_cells") or []:
+            xp.set_value(sheet, ref, None)
 
     # product line items below the (parsed) header row
     products = order.get("products") or [_single_product(order)]
@@ -1099,20 +1327,22 @@ def fill_ycsx(src_path, order, out_path, preserve=False):
     col_ma = ycsx_cols.get("ma", "E")
     col_spec = ycsx_cols.get("spec", "F")
     col_qty = ycsx_cols.get("qty", "J")
+    col_dvt = ycsx_cols.get("dvt") or (None if preserve else "I")
 
     last_data_row = base_row
     for i, p in enumerate(products):
         r = start_row + i
-        xp.set_value(sheet, f"B{r}", i + 1)
-        xp.set_value(sheet, f"{col_code}{r}", p.get("product_code", ""))
-        xp.set_value(sheet, f"{col_name}{r}", p.get("product_name", ""))
-        # ma_code/spec cells may not exist as individual <c> elements when r is
-        # inside a merged range (e.g. F13:H15). set_value returns False then —
-        # harmless because detailed specs live in each product's Định mức file.
-        xp.set_value(sheet, f"{col_ma}{r}", p.get("ma_code", ""))
-        xp.set_value(sheet, f"{col_spec}{r}", p.get("spec", ""))
-        xp.set_value(sheet, f"I{r}", "Cái")
-        xp.set_value(sheet, f"{col_qty}{r}", p.get("qty", ""))
+        _write(f"B{r}", i + 1)
+        _write(f"{col_code}{r}", p.get("product_code", ""))
+        _write(f"{col_name}{r}", p.get("product_name", ""))
+        # ma_code/spec: ở chế độ preserve chúng vừa được đọc ra từ chính file này
+        # (và spec hay nằm trong merge F13:H15) → không ghi lại.
+        if not preserve:
+            xp.set_value(sheet, f"{col_ma}{r}", p.get("ma_code", ""))
+            xp.set_value(sheet, f"{col_spec}{r}", p.get("spec", ""))
+        if col_dvt:
+            _write(f"{col_dvt}{r}", "Cái")
+        _write(f"{col_qty}{r}", p.get("qty", ""))
         last_data_row = r
 
     if not preserve:

@@ -192,3 +192,38 @@ class TestWfDiscover:
         with pytest.raises(HTTPException) as ei:
             _run(api.wf_discover())
         assert ei.value.status_code == 400
+
+class TestColorsCap:
+    """Máy in tối đa 6 màu — chặn ở cả form web và webhook Base.vn."""
+
+    def test_generate_endpoint_rejects_more_than_six(self):
+        class FakeUpload:
+            filename = "order.json"
+
+            async def read(self):
+                return b"{}"
+
+        with pytest.raises(HTTPException) as exc:
+            _run(api.generate_endpoint(file=FakeUpload(), colors=7))
+        assert exc.value.status_code == 400
+        assert "tối đa là 6" in exc.value.detail
+
+    def test_generate_endpoint_still_rejects_negative(self):
+        class FakeUpload:
+            filename = "order.json"
+
+            async def read(self):
+                return b"{}"
+
+        with pytest.raises(HTTPException) as exc:
+            _run(api.generate_endpoint(file=FakeUpload(), colors=-1))
+        assert exc.value.status_code == 400
+
+    def test_payload_colors_clamped(self):
+        assert api._colors_from_payload({"colors": 9}) == 6
+        assert api._colors_from_payload({"colors": -3}) == 0
+        assert api._colors_from_payload({"colors": 4}) == 4
+
+    def test_payload_default_clamped(self, monkeypatch):
+        monkeypatch.setenv("BASE_DEFAULT_COLORS", "10")
+        assert api._colors_from_payload({}) == 6
