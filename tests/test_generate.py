@@ -613,3 +613,301 @@ class TestYcsxPreserve:
 
     def test_delivery_note_preserved(self):
         assert "Long An" in _str(self.ws, "B23"), f"B23={_str(self.ws, 'B23')!r}"
+
+    def test_ycsx_output_is_cell_for_cell_identical(self):
+        """Regression (2026-08-12, đơn Hùng Duy): tool KHÔNG được làm phiếu YCSX
+        của sale khác đi. Trước đây fill_ycsx ghi lại mọi ô (kể cả khi giá trị
+        không đổi) và ghi cứng header vào B6:B10 — layout khách nào lệch dòng thì
+        sinh thêm một dòng '5. Số đơn hàng' thứ hai ngay trên bảng sản phẩm."""
+        src = load_workbook(os.path.join(SAMPLES, "YCSX_4oranges.xlsx"), data_only=True)
+        ws_src = src[src.sheetnames[0]]
+        diffs = [(c.coordinate, c.value, self.ws[c.coordinate].value)
+                 for row in ws_src.iter_rows() for c in row
+                 if c.value != self.ws[c.coordinate].value]
+        src.close()
+        assert not diffs, f"tool đã thay đổi {len(diffs)} ô của YCSX gốc: {diffs[:5]}"
+
+    def test_no_duplicate_header_label(self):
+        labels = ["1. Ngày yêu cầu", "2. Khách hàng", "3. Địa chỉ",
+                  "4. Mã khách hàng", "5. Số đơn hàng"]
+        for label in labels:
+            hits = [c.coordinate for row in self.ws.iter_rows() for c in row
+                    if isinstance(c.value, str) and c.value.strip().startswith(label)]
+            assert len(hits) <= 1, f"nhãn {label!r} xuất hiện {len(hits)} lần: {hits}"
+
+
+SAMPLE_25KG_HUNG_DUY = _load_json("25kg_hung_duy.json")
+
+
+def _hung_duy_order():
+    """Order đã qua parse_spec giống hệt đường đi thật của run() — sample này cố
+    tình chỉ có text spec để kiểm tra phần parse."""
+    from generate import _per_product_order, _single_product
+    return _per_product_order(SAMPLE_25KG_HUNG_DUY, _single_product(SAMPLE_25KG_HUNG_DUY))
+
+
+class TestHungDuySpecParsing:
+    """Đơn Hùng Duy 25S03IKH00502000046 — YCSX ghi kích thước túi lồng bằng dấu
+    '*' và quy cách đáy bằng chữ, spec yêu cầu 2 loại nẹp."""
+
+    SPEC = SAMPLE_25KG_HUNG_DUY["spec"]
+
+    def test_tui_long_dims_parsed_with_star_separator(self):
+        from generate import _parse_tui_long
+        out = _parse_tui_long(self.SPEC)
+        assert out.get("tui_long_rong_cm") == 57, out
+        assert out.get("tui_long_dai_cm") == 110, out
+        assert out.get("tui_long_loai") == "rin", out
+
+    def test_bag_dims_not_confused_with_liner_dims(self):
+        from generate import parse_spec
+        out = parse_spec(self.SPEC)
+        assert out["width_cm"] == 45 and out["gusset_cm"] == 10, out
+        assert out["bag_length_m"] == 0.89, out
+        assert out["tui_long_rong_cm"] == 57, out
+
+    def test_may_khong_dinh_day_is_day_ngan(self):
+        import nvl_lookup as nvl
+        from generate import _parse_tui_long
+        qc = _parse_tui_long(self.SPEC).get("tui_long_quy_cach_day")
+        assert nvl.quy_cach_day_to_ten(qc) == "ngắn", qc
+        assert nvl.quy_cach_day_to_ten("may dính đáy") == "dài"
+
+    def test_nep_parsed_kp_and_giay(self):
+        from generate import _parse_nep
+        nep = {n["loai"]: n for n in _parse_nep(self.SPEC, SAMPLE_25KG_HUNG_DUY)}
+        assert set(nep) == {"KP", "GIAY"}, nep
+        assert nep["KP"]["rong_cm"] == 6, nep["KP"]        # mặc định
+        assert nep["GIAY"]["rong_cm"] == 10, nep["GIAY"]   # "nẹp 10cm" trong YCSX
+        assert {t.lower() for t in nep["KP"]["tokens"]} == {"nhật", "vàng"}, nep["KP"]
+
+    def test_nep_lookup_and_weight(self):
+        fields = compute(_hung_duy_order(), "paper_kp", 2)
+        rows = {r["loai"]: r for r in fields["nep_rows"]}
+        assert rows["KP"]["code"] == "NKPVN06000001", rows["KP"]
+        assert rows["GIAY"]["code"] == "NKPN0100001", rows["GIAY"]
+        # kg = rộng nẹp(m) × SL × (rộng bao + 0,12m) × định lượng
+        assert abs(rows["KP"]["kg"] - 0.06 * 1600 * 0.67 * 0.16) < 1e-4, rows["KP"]
+        assert abs(rows["GIAY"]["kg"] - 0.10 * 1600 * 0.67 * 0.07) < 1e-4, rows["GIAY"]
+
+    def test_tui_long_name_filled_despite_duplicate_nvl_rows(self):
+        """Nguyên vật liệu.xlsx nhập trùng 2 dòng cho 'Túi PE rin 57x110cm 35gr,
+        đáy ngắn' — trước đây find_tui_long trả None nên sheet Thổi trống tên."""
+        fields = compute(_hung_duy_order(), "paper_kp", 2)
+        assert fields["tui_ten"] == "Túi PE rin 57x110cm 35gr, đáy ngắn", fields["tui_ten"]
+        assert fields["tui_ma"], "phải có mã túi lồng"
+        assert any("trùng tên" in w for w in fields["warnings"]), fields["warnings"]
+
+
+class TestHungDuyOutput:
+    """Kiểm tra file định mức thật của đơn Hùng Duy."""
+
+    @classmethod
+    def setup_class(cls):
+        outdir = tempfile.mkdtemp(prefix="hung_duy_")
+        run(("dict", SAMPLE_25KG_HUNG_DUY), 2, outdir=outdir)
+        dm = [os.path.join(outdir, f) for f in os.listdir(outdir)
+              if f.endswith(".xlsx") and f.startswith("Định mức")]
+        assert dm, f"no Định mức output in {os.listdir(outdir)}"
+        cls.wb = load_workbook(dm[0], data_only=False)
+
+    def test_thoi_tui_long_name_and_code(self):
+        ws = self.wb["Thổi"]
+        assert _str(ws, "C19") == "Túi PE rin 57x110cm 35gr, đáy ngắn", _str(ws, "C19")
+        assert _str(ws, "D19") == "TEA03505711001", _str(ws, "D19")
+
+    def test_thoi_stale_template_code_gone(self):
+        """Template KP mang sẵn mã túi cũ TEB0400521121 ở Thổi!D19 (và May!D19 =
+        '=Thổi!D19' nên nó hiện cả trên sheet May)."""
+        for sn in ("Thổi", "May"):
+            vals = [str(c.value) for row in self.wb[sn].iter_rows() for c in row
+                    if c.value is not None]
+            assert not any("TEB0400521121" in v for v in vals), f"{sn} còn mã cũ"
+
+    def test_thoi2_liner_dimensions_filled(self):
+        ws = self.wb["Thổi 2"]          # KP: D43 rộng, D44 dài, D45 đáy, D46 độ dày
+        assert _str(ws, "D43") == "570 ± 10", _str(ws, "D43")
+        assert _str(ws, "D44") == "1100 ± 10", _str(ws, "D44")
+        assert _str(ws, "D45") == "20-30", _str(ws, "D45")     # đáy ngắn
+        assert _str(ws, "D46") == "30 ± 1", _str(ws, "D46")
+        assert _str(ws, "D47") == "35 ± 1", _str(ws, "D47")
+
+    def test_may_nep_rows_filled(self):
+        ws = self.wb["May"]
+        assert _str(ws, "C21") == "Nẹp KP vàng Nhật 6cm", _str(ws, "C21")
+        assert _str(ws, "D21") == "NKPVN06000001", _str(ws, "D21")
+        assert _str(ws, "C22") == "Nẹp giấy Karft nhật vàng 10cm", _str(ws, "C22")
+        assert _str(ws, "D22") == "NKPN0100001", _str(ws, "D22")
+        assert _num(ws, "G21") and _num(ws, "G22"), "thiếu kg nẹp"
+        assert _str(ws, "F21") == "Kg" and _str(ws, "F22") == "Kg"
+
+
+class TestSoMauInMax:
+    def test_validate_inputs_rejects_more_than_six_colors(self):
+        from generate import validate_inputs, InputValidationError, SO_MAU_IN_MAX
+        assert SO_MAU_IN_MAX == 6
+        try:
+            validate_inputs(SAMPLE_25KG, "paper_kp", 7)
+            assert False, "expected InputValidationError"
+        except InputValidationError as e:
+            assert "tối đa là 6" in str(e), str(e)
+
+    def test_validate_inputs_accepts_six_colors(self):
+        from generate import validate_inputs
+        validate_inputs(SAMPLE_25KG, "paper_kp", 6)
+
+
+class TestNoLinerClearsThoiRows:
+    """Đơn 'không lồng túi': sheet Thổi bị ẩn nhưng May!C19/D19 là công thức
+    '=Thổi!C19/D19' nên vẫn hiện 0 + mã túi cũ trên sheet May đang hiển thị."""
+
+    @classmethod
+    def setup_class(cls):
+        import copy
+        order = copy.deepcopy(SAMPLE_25KG_HUNG_DUY)
+        order["spec"] = order["spec"].replace(
+            "5. Quy cách lồng túi PE: Lồng túi PE rin (57*110cm) 35gr "
+            "(túi lồng may không dính đáy)",
+            "5. Quy cách lồng túi PE: không lồng túi")
+        outdir = tempfile.mkdtemp(prefix="no_liner_")
+        run(("dict", order), 2, outdir=outdir)
+        dm = [os.path.join(outdir, f) for f in os.listdir(outdir)
+              if f.endswith(".xlsx") and f.startswith("Định mức")]
+        cls.wb = load_workbook(dm[0], data_only=False)
+
+    def test_may_liner_row_cleared(self):
+        ws = self.wb["May"]
+        for ref in ("C19", "D19", "G19", "G20"):
+            assert ws[ref].value is None, f"May!{ref}={ws[ref].value!r}"
+
+    def test_no_stale_liner_code_anywhere(self):
+        for sn in ("Thổi", "May"):
+            vals = [str(c.value) for row in self.wb[sn].iter_rows() for c in row
+                    if c.value is not None]
+            assert not any("TEB0400521121" in v for v in vals), f"{sn} còn mã cũ"
+
+
+class TestYcsxShiftedHeaderLayout:
+    """Regression (2026-08-12, đơn Hùng Duy 25S03IKH00502000046): YCSX của mỗi
+    khách có layout khác nhau — khối header có thể không nằm đúng B6:B10 và có
+    khách không có cột 'Mã code' (mọi cột lệch đi 1). Ghi cứng B6:B10 + ghi cứng
+    ĐVT vào cột I sẽ tạo thêm dòng '5. Số đơn hàng' thứ hai và đè lên cột khác.
+    """
+
+    @classmethod
+    def setup_class(cls):
+        from openpyxl import Workbook
+        from generate import parse_ycsx, fill_ycsx
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "HD"
+        # header block dịch xuống 1 dòng (7..11) so với template 4 Oranges
+        ws["B7"] = "1. Ngày yêu cầu: 21/08/2025"
+        ws["B8"] = "2. Khách hàng: CÔNG TY TNHH ... HÙNG DUY"
+        ws["B9"] = "3. Địa chỉ: Tây Ninh"
+        ws["B10"] = "4. Mã khách hàng: KH00502"
+        ws["B11"] = "5. Số đơn hàng: 25S03IKH00502000046"
+        # bảng sản phẩm ở dòng 13, KHÔNG có cột "Mã code" → ĐVT ở H, SL ở I
+        for col, text in {"B": "STT", "C": "Mã sản phẩm", "D": "Tên sản phẩm",
+                          "E": "Chi tiết kỹ thuật", "H": "ĐVT",
+                          "I": "Số lượng\n(-8%)", "J": "Ngày cần\ngiao hàng",
+                          "K": "Ghi chú"}.items():
+            ws[f"{col}13"] = text
+        ws["B14"] = 1
+        ws["C14"] = "BT1KH00502KP0004"
+        ws["D14"] = "Bao Bột mỳ Alpha 25kg"
+        ws["E14"] = SAMPLE_25KG_HUNG_DUY["spec"]
+        ws["H14"] = "Cái"
+        ws["I14"] = 1600
+        ws["J14"] = "29/08/2025"
+        ws["K14"] = "mã cũ lưu ý dung sai -8% CLC"
+        cls.tmpdir = tempfile.mkdtemp(prefix="ycsx_shift_")
+        cls.src = os.path.join(cls.tmpdir, "YCSX_hung_duy.xlsx")
+        wb.save(cls.src)
+        wb.close()
+        cls.order = parse_ycsx(cls.src)
+        cls.out = os.path.join(cls.tmpdir, "out.xlsx")
+        fill_ycsx(cls.src, cls.order, cls.out, preserve=True)
+        res = load_workbook(cls.out, data_only=True)
+        cls.ws = res[res.sheetnames[0]]
+
+    def test_layout_detected(self):
+        assert self.order["ycsx_header_row"] == 13, self.order["ycsx_header_row"]
+        assert self.order["ycsx_cols"]["qty"] == "I", self.order["ycsx_cols"]
+        assert self.order["ycsx_cols"]["dvt"] == "H", self.order["ycsx_cols"]
+        assert self.order["order_id"] == "25S03IKH00502000046", self.order["order_id"]
+        assert self.order["ycsx_header_cells"]["order_id"]["ref"] == "B11"
+
+    def test_order_number_not_duplicated(self):
+        hits = [c.coordinate for row in self.ws.iter_rows() for c in row
+                if isinstance(c.value, str) and c.value.strip().startswith("5. Số đơn hàng")]
+        assert hits == ["B11"], f"'5. Số đơn hàng' xuất hiện ở {hits}"
+
+    def test_no_header_text_written_into_spacer_rows(self):
+        for ref in ("B6", "B12"):
+            assert self.ws[ref].value is None, f"{ref}={self.ws[ref].value!r}"
+
+    def test_qty_column_untouched_by_dvt_write(self):
+        assert self.ws["H14"].value == "Cái", self.ws["H14"].value
+        assert float(self.ws["I14"].value) == 1600.0, self.ws["I14"].value
+        assert self.ws["J14"].value == "29/08/2025", self.ws["J14"].value
+
+    def test_output_identical_to_input(self):
+        src = load_workbook(self.src, data_only=True)
+        ws_src = src[src.sheetnames[0]]
+        diffs = [(c.coordinate, c.value, self.ws[c.coordinate].value)
+                 for row in ws_src.iter_rows() for c in row
+                 if c.value != self.ws[c.coordinate].value]
+        src.close()
+        assert not diffs, f"tool đã thay đổi {len(diffs)} ô: {diffs[:5]}"
+
+
+class TestYcsxDuplicateOrderNumberRemoved:
+    """Bản sao thừa của dòng "5. Số đơn hàng" nằm giữa khối header và bảng sản
+    phẩm phải bị xoá (quyết định 2026-08-12). Test này cũng chạy qua đường ghi
+    thật của XlsxPatch trên file do openpyxl tạo (rels Target dạng tuyệt đối)."""
+
+    @classmethod
+    def setup_class(cls):
+        from openpyxl import Workbook
+        from generate import parse_ycsx, fill_ycsx
+        wb = Workbook()
+        ws = wb.active
+        ws["B6"] = "1. Ngày yêu cầu: 21/08/2025"
+        ws["B7"] = "2. Khách hàng: HÙNG DUY"
+        ws["B8"] = "3. Địa chỉ: Tây Ninh"
+        ws["B9"] = "4. Mã khách hàng: KH00502"
+        ws["B10"] = "5. Số đơn hàng: 25S03IKH00502000046"
+        ws["B11"] = "5. Số đơn hàng: 25S03IKH00502000046"   # <- bản trùng
+        for col, text in {"B": "STT", "C": "Mã sản phẩm", "D": "Tên sản phẩm",
+                          "E": "Chi tiết kỹ thuật", "H": "ĐVT",
+                          "I": "Số lượng"}.items():
+            ws[f"{col}12"] = text
+        ws["B13"] = 1
+        ws["C13"] = "BT1KH00502KP0004"
+        ws["D13"] = "Bao Bột mỳ Alpha 25kg"
+        ws["E13"] = SAMPLE_25KG_HUNG_DUY["spec"]
+        ws["H13"] = "Cái"
+        ws["I13"] = 1600
+        tmpdir = tempfile.mkdtemp(prefix="ycsx_dup_")
+        cls.src = os.path.join(tmpdir, "in.xlsx")
+        wb.save(cls.src)
+        wb.close()
+        order = parse_ycsx(cls.src)
+        cls.dups = order["ycsx_dup_header_cells"]
+        cls.out = os.path.join(tmpdir, "out.xlsx")
+        fill_ycsx(cls.src, order, cls.out, preserve=True)
+        res = load_workbook(cls.out, data_only=True)
+        cls.ws = res[res.sheetnames[0]]
+
+    def test_duplicate_detected(self):
+        assert self.dups == ["B11"], self.dups
+
+    def test_duplicate_cleared_original_kept(self):
+        assert _str(self.ws, "B10").startswith("5. Số đơn hàng"), _str(self.ws, "B10")
+        assert self.ws["B11"].value is None, self.ws["B11"].value
+
+    def test_product_row_intact(self):
+        assert _str(self.ws, "C13") == "BT1KH00502KP0004"
+        assert float(self.ws["I13"].value) == 1600.0
+        assert "57*110cm" in _str(self.ws, "E13"), "spec gốc phải nguyên văn"

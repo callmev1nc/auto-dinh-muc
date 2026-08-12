@@ -35,7 +35,8 @@ uploaded_file = st.file_uploader(
     help="Upload a JSON order or a YCSX .xlsx production request form"
 )
 
-colors = st.number_input("Số màu in (number of print colors)", min_value=1, max_value=12, value=3)
+colors = st.number_input("Số màu in (number of print colors)", min_value=0, max_value=6, value=3,
+                         help="0 = không in. Máy in tối đa 6 màu.")
 
 if st.button("Generate", type="primary"):
     if not uploaded_file:

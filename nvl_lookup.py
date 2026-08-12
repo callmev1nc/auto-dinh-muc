@@ -111,17 +111,34 @@ QUY_CACH_DAY_TUI_LONG = {
     "dài": "dài",
     "ngắn": "ngắn",
     "ngan": "ngắn",
-    "may dính đáy": "dài",  # theo quy uoc hien tai, giong LTMS - co the can xac nhan them
+    # Xac nhan boi nguoi dung 2026-08-12: "may khong dinh day" = day ngan,
+    # "may dinh day" = day dai.
+    "may dính đáy": "dài",
+    "dính đáy": "dài",
+    "may không dính đáy": "ngắn",
+    "không dính đáy": "ngắn",
+    "khong dinh day": "ngắn",
 }
 
 
 def quy_cach_day_to_ten(quy_cach_raw):
-    """Doi quy cach day tho tu YCSX (VD 'LTMS', 'MTLS') sang tag 'dài'/'ngắn'
-    dung trong ten NVL. Tra ve None neu khong nhan dien duoc (khong doan)."""
+    """Doi quy cach day tho tu YCSX (VD 'LTMS', 'MTLS', 'may khong dinh day')
+    sang tag 'dài'/'ngắn' dung trong ten NVL. Tra ve None neu khong nhan dien
+    duoc (khong doan).
+
+    LUU Y: phai xet PHU DINH TRUOC - chuoi "không dính đáy" CHUA "dính đáy",
+    neu tra dict theo thu tu tuy y se ra "dài" (nguoc hoan toan).
+    """
     if not quy_cach_raw:
         return None
     key = _norm(str(quy_cach_raw)).strip().lower()
-    return QUY_CACH_DAY_TUI_LONG.get(key)
+    if key in QUY_CACH_DAY_TUI_LONG:
+        return QUY_CACH_DAY_TUI_LONG[key]
+    if "không dính đáy" in key or "khong dinh day" in key:
+        return "ngắn"
+    if "dính đáy" in key or "dinh day" in key:
+        return "dài"
+    return None
 
 
 def find_tui_long(items, loai, rong_cm, dai_cm, khoi_luong_g, day_loai=None):
@@ -168,6 +185,63 @@ def find_tui_long(items, loai, rong_cm, dai_cm, khoi_luong_g, day_loai=None):
 
     if len(candidates) == 1:
         return candidates[0], candidates
+    # SUA LOI 2026-08-12 (don Hung Duy 25S03IKH00502000046): danh muc goc co
+    # nhung dong NHAP TRUNG - cung mot ten, hai ma khac nhau (VD "Túi PE rin
+    # 57x110cm 35gr, đáy ngắn" = TEA03505711001 va TEA0350571101). Truoc day
+    # len(candidates) != 1 nen tra ve None -> sheet Thoi trong ten tui long VA
+    # con sot ma cu cua template. Neu MOI ung vien cung mot ten thi thuc chat
+    # chi la 1 vat lieu: tra ve dong dau. Caller thay len(candidates) > 1 thi
+    # tu canh bao trung ma. Ten KHAC nhau that -> van tra None (khong doan).
+    if candidates and len({_ten_key(c["ten"]) for c in candidates}) == 1:
+        return candidates[0], candidates
+    return None, candidates
+
+
+def _ten_key(ten):
+    """Khoa so sanh ten NVL: NFC + lower + bo moi khoang trang (nen "6 cm" ==
+    "6cm", "52 x 110" == "52x110")."""
+    return "".join(_norm(str(ten)).lower().split())
+
+
+def _rong_cm_tags(rong_cm):
+    """Cac cach danh muc goc viet chieu rong nep: 6 -> {"6cm"}; 6.5 ->
+    {"6,5cm", "6.5cm"}."""
+    if float(rong_cm) == int(rong_cm):
+        return {f"{int(rong_cm)}cm"}
+    txt = f"{float(rong_cm):g}"
+    return {txt.replace(".", ",") + "cm", txt + "cm"}
+
+
+def find_nep(items, tokens, rong_cm):
+    """
+    Tim Nep theo cac tu khoa KHONG PHU THUOC THU TU + chieu rong (cm).
+
+    Vi sao khong dung find_exact_name() truc tiep: ten trong danh muc goc dat
+    theo thu tu khac YCSX ("Nẹp KP vàng Nhật 6cm" vs YCSX ghi "Nẹp KP nhật
+    vàng"), va chieu rong co the viet "6cm" hoac "6 cm" hoac "6,5cm". Ham nay
+    so khop tren ten da bo khoang trang, va NEO chu so de "16cm" khong khop
+    "6cm".
+
+    tokens: list tu khoa bat buoc, VD ["nẹp kp", "vàng", "nhật"].
+    Tra ve (best_match_or_None, candidates) - chi tra best_match khi CHI CO 1
+    ung vien (hoac nhieu ung vien nhung trung ten y het), nguoc lai tra None
+    kem candidates de hoi lai.
+    """
+    import re
+    toks = [_ten_key(t) for t in tokens if t]
+    tags = _rong_cm_tags(rong_cm)
+    candidates = []
+    for it in items:
+        key = _ten_key(it["ten"])
+        if not all(t in key for t in toks):
+            continue
+        if not any(re.search(r"(?<!\d)" + re.escape(tag), key) for tag in tags):
+            continue
+        candidates.append(it)
+    if len(candidates) == 1:
+        return candidates[0], candidates
+    if candidates and len({_ten_key(c["ten"]) for c in candidates}) == 1:
+        return candidates[0], candidates
     return None, candidates
 
 
@@ -184,6 +258,9 @@ COMMON_MATERIALS_HINT = {
     "keo 9415 (Tân Châu/Neo Nam Việt)": ["Hạt nhựa PP FC9415"],
     "keo M9600": ["Hạt nhựa nguyên sinh M9600"],
     "Nẹp KP vàng Nhật 6cm": ["Nẹp KP vàng Nhật 6cm"],
+    # LUU Y: danh muc goc viet SAI CHINH TA "Karft" (khong phai "Kraft") -
+    # dung "kraft" lam tu khoa se KHONG khop dong nao.
+    "Nẹp giấy Karft nhật vàng 10cm": ["nẹp giấy", "nhật", "vàng", "10cm"],
 }
 
 

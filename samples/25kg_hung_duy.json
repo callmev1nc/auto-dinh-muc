@@ -1,0 +1,13 @@
+{
+  "_comment": "Đơn Hùng Duy 25S03IKH00502000046 — fixture regression cho 3 lỗi báo ngày 2026-08-12: (1) sheet Thổi trống tên túi lồng + sót mã cũ TEB0400521121, (2) Thổi 2 trống kích thước túi lồng vì YCSX ghi '(57*110cm)' bằng dấu *, (3) nẹp chưa bao giờ được điền (đơn này dùng 2 nẹp: nẹp KP nhật vàng để MAY + nẹp giấy 10cm để DÁN).",
+  "customer": "CÔNG TY TNHH XUẤT NHẬP KHẨU - THƯƠNG MẠI - CÔNG NGHỆ - DỊCH VỤ HÙNG DUY",
+  "address": "Số 250 Lý Thường Kiệt, khu phố 4, Phường Long Hoa, Thị xã Hoà Thành, Tỉnh Tây Ninh, Việt Nam",
+  "customer_code": "KH00502",
+  "order_id": "25S03IKH00502000046",
+  "ngay_yc": "21/08/2025",
+  "product_name": "Bao Bột mỳ Alpha 25kg",
+  "product_code": "BT1KH00502KP0004",
+  "qty": 1600,
+  "tolerance": 0.08,
+  "spec": "1.Kích thước: (45+10) x 89cm (±1)\n2.Kích thước: (45+10) x 89cm (±1)\n3. Cấu trúc:\n- Bao KP in flexo\n- Giấy Kraft Nhật vàng\n- Ghép PP dệt trắng\n4. Quy cách gấp và may:\n- Gấp hông\n- Cắt miệng thẳng\n-May nẹp đáy bao (Nẹp KP nhật vàng), dán nẹp giấy đầu còn lại nẹp 10cm- dán nẹp giấy về cùng 1 bên mặt sau.\n5. Quy cách lồng túi PE: Lồng túi PE rin (57*110cm) 35gr (túi lồng may không dính đáy)\n6. Quy cách đóng gói: bó bao quay bao về cùng 1 chiều, đóng gói 200 bao/kiện"
+}

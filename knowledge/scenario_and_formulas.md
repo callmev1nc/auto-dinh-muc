@@ -80,7 +80,15 @@ in Cấu trúc (`Bao BOPP in ống đồng`, `Bao KP in Flexo`, `Bao in offset`)
 
 **May:**
 - Chỉ may = 0.6 kg / 1000 bao · Dây bó bao = 1 kg / 5000 bao
-- Nẹp = chiều rộng nẹp × định lượng nẹp × (rộng bao + 12 cm)  (KP 0.16 / OPP 0.106)
+- Khối lượng 1 nẹp = chiều rộng nẹp (m) × định lượng nẹp × (rộng bao + 12 cm)
+  - định lượng: **KP 0.16 · OPP 0.106 · giấy 0.07**
+  - chiều rộng mặc định: **KP/OPP 6 cm · giấy 10 cm** (dùng số YCSX ghi nếu có)
+  - Tổng kg nẹp = số lượng × khối lượng 1 nẹp
+- Một đơn có thể dùng **2 nẹp**: nẹp KP để **may** + nẹp giấy để **dán** (VD YCSX
+  Hùng Duy: "May nẹp đáy bao (Nẹp KP nhật vàng), dán nẹp giấy … nẹp 10cm").
+  Nẹp giấy không ghi màu/xuất xứ → suy theo **giấy thân bao** (Kraft Nhật vàng →
+  "Nẹp giấy Karft nhật vàng 10cm"; lưu ý danh mục NVL viết sai chính tả "Karft").
+- Ghi vào sheet May dòng 21/22 (C tên · D mã · F "Kg" · G kg).
 
 **Đóng gói (bao/kiện — bảng TSVH ĐÓNG GÓI TSDGO, hiệu lực 1/10/2023):**
 - OPP: chiều dài ≥90cm → 200; 66–89cm → **300**; 60–65cm → 400

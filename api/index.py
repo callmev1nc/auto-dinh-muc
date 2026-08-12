@@ -242,8 +242,8 @@ img{max-width:100%}
             <span class="field__hint">0 = không in</span>
           </div>
           <div class="stepper">
-            <input class="stepper__readout" id="colors" name="colors" type="number" min="0" max="12" value="3" required inputmode="numeric">
-            <input class="stepper__slider" type="range" min="0" max="12" value="3" aria-label="Số màu in">
+            <input class="stepper__readout" id="colors" name="colors" type="number" min="0" max="6" value="3" required inputmode="numeric">
+            <input class="stepper__slider" type="range" min="0" max="6" value="3" aria-label="Số màu in">
           </div>
         </div>
 
@@ -260,7 +260,7 @@ img{max-width:100%}
     <section class="steps" aria-label="Hướng dẫn 3 bước">
       <ol class="steps__list">
         <li class="step"><span class="step__num">1</span><div><p class="step__title">Tải đơn hàng</p><p class="step__desc">File .json hoặc .xlsx từ khách hàng.</p></div></li>
-        <li class="step"><span class="step__num">2</span><div><p class="step__title">Chọn số màu in</p><p class="step__desc">Từ 0 (không in) đến 12.</p></div></li>
+        <li class="step"><span class="step__num">2</span><div><p class="step__title">Chọn số màu in</p><p class="step__desc">Từ 0 (không in) đến 6.</p></div></li>
         <li class="step"><span class="step__num">3</span><div><p class="step__title">Tải ZIP kết quả</p><p class="step__desc">Định mức vật tư + YCSX.</p></div></li>
       </ol>
     </section>
@@ -312,9 +312,9 @@ img{max-width:100%}
     dropzone.addEventListener('drop', function(e){ e.preventDefault(); dropzone.classList.remove('is-dragover'); if (e.dataTransfer.files.length){ fileInput.files = e.dataTransfer.files; renderFile(); } });
 
     /* ---------- STEPPER: two-way bind slider <-> #colors (slider has NO name) ---------- */
-    function setPct(v){ slider.style.setProperty('--pct', (v/12*100)); }
+    function setPct(v){ slider.style.setProperty('--pct', (v/6*100)); }
     slider.addEventListener('input', function(){ colorsEl.value = slider.value; setPct(slider.value); });
-    colorsEl.addEventListener('input', function(){ var v = Math.max(0, Math.min(12, +colorsEl.value || 0)); slider.value = v; setPct(v); });
+    colorsEl.addEventListener('input', function(){ var v = Math.max(0, Math.min(6, +colorsEl.value || 0)); slider.value = v; setPct(v); });
     setPct(colorsEl.value); // init
 
     /* ---------- SUBMIT (existing fetch/ZIP/download logic preserved; +spinner, +VI labels, +status classes) ---------- */
@@ -366,6 +366,8 @@ async def generate_endpoint(
 ):
     if colors < 0:
         raise HTTPException(400, "Số màu in không được âm")
+    if colors > generate.SO_MAU_IN_MAX:
+        raise HTTPException(400, f"Số màu in tối đa là {generate.SO_MAU_IN_MAX}")
 
     suffix = Path(file.filename).suffix.lower()
     if suffix not in (".json", ".xlsx"):
@@ -578,18 +580,23 @@ def _job_id_from_payload(payload: dict):
     return None
 
 
+def _clamp_colors(n: int) -> int:
+    """Kẹp số màu in về 0..SO_MAU_IN_MAX — máy in chỉ chạy được 6 màu."""
+    return max(0, min(generate.SO_MAU_IN_MAX, n))
+
+
 def _colors_from_payload(payload: dict):
     for key in ("colors", "so_mau_in", "so_mau", "custom_so_mau_in"):
         src = payload.get("data") if isinstance(payload.get("data"), dict) else {}
         value = payload.get(key, src.get(key))
         if value not in (None, ""):
             try:
-                return int(str(value).strip())
+                return _clamp_colors(int(str(value).strip()))
             except (TypeError, ValueError):
                 break
     default = os.environ.get("BASE_DEFAULT_COLORS", "3")
     try:
-        return int(default)
+        return _clamp_colors(int(default))
     except ValueError:
         return 3
 
